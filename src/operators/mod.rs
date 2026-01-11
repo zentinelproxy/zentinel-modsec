@@ -22,6 +22,17 @@ use std::sync::Arc;
 /// Type alias for a compiled operator.
 pub type CompiledOperator = dyn Operator;
 
+/// Create an operator from a name and argument string.
+/// This is a convenience function for testing and benchmarking.
+pub fn create_operator(name: OperatorName, argument: &str) -> Result<Arc<dyn Operator>> {
+    let spec = OperatorSpec {
+        negated: false,
+        name,
+        argument: argument.to_string(),
+    };
+    compile_operator(&spec)
+}
+
 /// Create a compiled operator from a specification.
 pub fn compile_operator(spec: &OperatorSpec) -> Result<Arc<dyn Operator>> {
     let name = &spec.name;

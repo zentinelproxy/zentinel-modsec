@@ -73,6 +73,9 @@ parking_lot = "0.12"
 # Lazy initialization
 once_cell = "1.19"
 
+# Perfect hash function for fast lookups
+phf = { version = "0.11", features = ["macros"] }
+
 # Optional: geolocation
 maxminddb = { version = "0.24", optional = true }
 

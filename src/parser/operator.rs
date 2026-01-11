@@ -1,6 +1,9 @@
 //! Operator parsing for SecRule.
+//!
+//! Optimized with perfect hash function for O(1) operator name lookup.
 
 use crate::error::{Error, Result};
+use phf::phf_map;
 
 /// An operator specification in a SecRule.
 #[derive(Debug, Clone)]
@@ -14,7 +17,7 @@ pub struct OperatorSpec {
 }
 
 /// Operator names supported by ModSecurity.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OperatorName {
     // Pattern matching
     /// Regular expression match.
@@ -115,55 +118,69 @@ pub enum OperatorName {
     Rsub,
 }
 
+/// Perfect hash map for O(1) operator name lookup.
+static OPERATOR_MAP: phf::Map<&'static str, OperatorName> = phf_map! {
+    "rx" => OperatorName::Rx,
+    "pm" => OperatorName::Pm,
+    "pmfromfile" => OperatorName::PmFromFile,
+    "pmf" => OperatorName::Pmf,
+    "streq" => OperatorName::StreQ,
+    "contains" => OperatorName::Contains,
+    "containsword" => OperatorName::ContainsWord,
+    "beginswith" => OperatorName::BeginsWith,
+    "endswith" => OperatorName::EndsWith,
+    "within" => OperatorName::Within,
+    "strmatch" => OperatorName::StrMatch,
+    "eq" => OperatorName::Eq,
+    "ne" => OperatorName::Ne,
+    "gt" => OperatorName::Gt,
+    "ge" => OperatorName::Ge,
+    "lt" => OperatorName::Lt,
+    "le" => OperatorName::Le,
+    "detectsqli" => OperatorName::DetectSqli,
+    "detectxss" => OperatorName::DetectXss,
+    "validateurlencoding" => OperatorName::ValidateUrlEncoding,
+    "validateutf8encoding" => OperatorName::ValidateUtf8Encoding,
+    "validatebyterange" => OperatorName::ValidateByteRange,
+    "validatehash" => OperatorName::ValidateHash,
+    "validatedtd" => OperatorName::ValidateDtd,
+    "validateschema" => OperatorName::ValidateSchema,
+    "verifycc" => OperatorName::VerifyCc,
+    "verifyssn" => OperatorName::VerifySsn,
+    "verifycpf" => OperatorName::VerifyCpf,
+    "ipmatch" => OperatorName::IpMatch,
+    "ipmatchfromfile" => OperatorName::IpMatchFromFile,
+    "ipmatchf" => OperatorName::IpMatchF,
+    "rbl" => OperatorName::Rbl,
+    "geolookup" => OperatorName::GeoLookup,
+    "gsblookup" => OperatorName::GsbLookup,
+    "inspectfile" => OperatorName::InspectFile,
+    "fuzzyhash" => OperatorName::FuzzyHash,
+    "nomatch" => OperatorName::NoMatch,
+    "unconditionalmatch" => OperatorName::UnconditionalMatch,
+    "rsub" => OperatorName::Rsub,
+};
+
 impl OperatorName {
-    /// Parse an operator name from a string.
+    /// Parse an operator name from a string (O(1) lookup).
+    #[inline]
     pub fn from_str(s: &str) -> Option<Self> {
-        let lower = s.to_lowercase();
-        match lower.as_str() {
-            "rx" => Some(Self::Rx),
-            "pm" => Some(Self::Pm),
-            "pmfromfile" => Some(Self::PmFromFile),
-            "pmf" => Some(Self::Pmf),
-            "streq" => Some(Self::StreQ),
-            "contains" => Some(Self::Contains),
-            "containsword" => Some(Self::ContainsWord),
-            "beginswith" => Some(Self::BeginsWith),
-            "endswith" => Some(Self::EndsWith),
-            "within" => Some(Self::Within),
-            "strmatch" => Some(Self::StrMatch),
-            "eq" => Some(Self::Eq),
-            "ne" => Some(Self::Ne),
-            "gt" => Some(Self::Gt),
-            "ge" => Some(Self::Ge),
-            "lt" => Some(Self::Lt),
-            "le" => Some(Self::Le),
-            "detectsqli" => Some(Self::DetectSqli),
-            "detectxss" => Some(Self::DetectXss),
-            "validateurlencoding" => Some(Self::ValidateUrlEncoding),
-            "validateutf8encoding" => Some(Self::ValidateUtf8Encoding),
-            "validatebyterange" => Some(Self::ValidateByteRange),
-            "validatehash" => Some(Self::ValidateHash),
-            "validatedtd" => Some(Self::ValidateDtd),
-            "validateschema" => Some(Self::ValidateSchema),
-            "verifycc" => Some(Self::VerifyCc),
-            "verifyssn" => Some(Self::VerifySsn),
-            "verifycpf" => Some(Self::VerifyCpf),
-            "ipmatch" => Some(Self::IpMatch),
-            "ipmatchfromfile" => Some(Self::IpMatchFromFile),
-            "ipmatchf" => Some(Self::IpMatchF),
-            "rbl" => Some(Self::Rbl),
-            "geolookup" => Some(Self::GeoLookup),
-            "gsblookup" => Some(Self::GsbLookup),
-            "inspectfile" => Some(Self::InspectFile),
-            "fuzzyhash" => Some(Self::FuzzyHash),
-            "nomatch" => Some(Self::NoMatch),
-            "unconditionalmatch" => Some(Self::UnconditionalMatch),
-            "rsub" => Some(Self::Rsub),
-            _ => None,
+        // Fast path: check if already lowercase ASCII
+        if s.bytes().all(|b| b.is_ascii_lowercase()) {
+            return OPERATOR_MAP.get(s).copied();
         }
+        // Slow path: need to lowercase
+        let mut buf = [0u8; 32];
+        let len = s.len().min(32);
+        for (i, b) in s.bytes().take(len).enumerate() {
+            buf[i] = b.to_ascii_lowercase();
+        }
+        let lower = std::str::from_utf8(&buf[..len]).ok()?;
+        OPERATOR_MAP.get(lower).copied()
     }
 
     /// Check if this operator requires an argument.
+    #[inline]
     pub fn requires_argument(&self) -> bool {
         !matches!(
             self,
@@ -179,11 +196,13 @@ impl OperatorName {
 }
 
 /// Parse an operator specification from a string.
+#[inline]
 pub fn parse_operator(input: &str) -> Result<OperatorSpec> {
     let input = input.trim();
+    let bytes = input.as_bytes();
 
     // Check for negation
-    let (negated, input) = if input.starts_with('!') {
+    let (negated, input) = if bytes.first() == Some(&b'!') {
         (true, input[1..].trim_start())
     } else {
         (false, input)
@@ -195,12 +214,10 @@ pub fn parse_operator(input: &str) -> Result<OperatorSpec> {
         let rest = &input[1..];
 
         // Find the end of the operator name (first space or end)
-        let (name_str, argument) = if let Some(pos) = rest.find(|c: char| c.is_whitespace()) {
-            let name = &rest[..pos];
-            let arg = rest[pos..].trim().to_string();
-            (name, arg)
-        } else {
-            (rest, String::new())
+        let space_pos = rest.bytes().position(|b| b.is_ascii_whitespace());
+        let (name_str, argument) = match space_pos {
+            Some(pos) => (&rest[..pos], rest[pos..].trim_start().to_string()),
+            None => (rest, String::new()),
         };
 
         let name = OperatorName::from_str(name_str).ok_or_else(|| Error::UnknownOperator {
@@ -267,5 +284,14 @@ mod tests {
         let op = parse_operator("@pm admin root user").unwrap();
         assert_eq!(op.name, OperatorName::Pm);
         assert_eq!(op.argument, "admin root user");
+    }
+
+    #[test]
+    fn test_operator_lookup_case_insensitive() {
+        assert_eq!(OperatorName::from_str("rx"), Some(OperatorName::Rx));
+        assert_eq!(OperatorName::from_str("RX"), Some(OperatorName::Rx));
+        assert_eq!(OperatorName::from_str("Rx"), Some(OperatorName::Rx));
+        assert_eq!(OperatorName::from_str("detectSQLi"), Some(OperatorName::DetectSqli));
+        assert_eq!(OperatorName::from_str("DETECTSQLI"), Some(OperatorName::DetectSqli));
     }
 }

@@ -306,7 +306,7 @@ fn bench_transaction_comparison(c: &mut Criterion) {
             tx.process_uri(black_box("/api/users"), "GET", "HTTP/1.1").unwrap();
             tx.add_request_header("Host", "example.com").unwrap();
             tx.process_request_headers().unwrap();
-            tx.intervention()
+            tx.intervention().is_some()
         })
     });
 
@@ -328,7 +328,7 @@ fn bench_transaction_comparison(c: &mut Criterion) {
             tx.process_uri(black_box("/api/users?id=1' OR '1'='1"), "GET", "HTTP/1.1").unwrap();
             tx.add_request_header("Host", "example.com").unwrap();
             tx.process_request_headers().unwrap();
-            tx.intervention()
+            tx.intervention().is_some()
         })
     });
 
@@ -369,7 +369,7 @@ fn bench_body_comparison(c: &mut Criterion) {
             tx.process_request_headers().unwrap();
             tx.append_request_body(black_box(body)).unwrap();
             tx.process_request_body().unwrap();
-            tx.intervention()
+            tx.intervention().is_some()
         })
     });
 
@@ -413,7 +413,7 @@ fn bench_throughput_comparison(c: &mut Criterion) {
             tx.process_uri(black_box(uri), method, "HTTP/1.1").unwrap();
             tx.add_request_header("Host", "example.com").unwrap();
             tx.process_request_headers().unwrap();
-            tx.intervention()
+            tx.intervention().is_some()
         })
     });
 
@@ -443,7 +443,7 @@ fn bench_throughput_comparison(c: &mut Criterion) {
             tx.process_uri(black_box(uri), "GET", "HTTP/1.1").unwrap();
             tx.add_request_header("Host", "example.com").unwrap();
             tx.process_request_headers().unwrap();
-            tx.intervention()
+            tx.intervention().is_some()
         })
     });
 

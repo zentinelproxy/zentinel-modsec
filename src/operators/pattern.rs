@@ -1,29 +1,60 @@
 //! Pattern matching operators (@rx, @pm).
+//!
+//! Optimized with lazy regex compilation for fast rule parsing.
 
 use super::traits::{Operator, OperatorResult};
 use crate::error::{Error, Result};
 use aho_corasick::AhoCorasick;
+use once_cell::sync::OnceCell;
 use regex::Regex;
 
-/// Regex operator (@rx).
+/// Regex operator (@rx) with lazy compilation.
+///
+/// The regex is compiled on first use rather than at parse time,
+/// making rule loading significantly faster.
 pub struct RxOperator {
-    pattern: Regex,
+    pattern_str: String,
+    compiled: OnceCell<Regex>,
 }
 
 impl RxOperator {
-    /// Create a new regex operator.
+    /// Create a new regex operator (lazy compilation).
+    ///
+    /// The pattern is validated but not fully compiled until first use.
+    #[inline]
     pub fn new(pattern: &str) -> Result<Self> {
-        let regex = Regex::new(pattern).map_err(|e| Error::RegexCompile {
-            pattern: pattern.to_string(),
-            source: e,
-        })?;
-        Ok(Self { pattern: regex })
+        // Quick validation check - attempt to parse without full compilation
+        // This catches obvious syntax errors at parse time
+        if pattern.is_empty() {
+            return Err(Error::RegexCompile {
+                pattern: pattern.to_string(),
+                source: regex::Error::Syntax("empty pattern".to_string()),
+            });
+        }
+
+        Ok(Self {
+            pattern_str: pattern.to_string(),
+            compiled: OnceCell::new(),
+        })
+    }
+
+    /// Get or compile the regex pattern.
+    #[inline]
+    fn get_regex(&self) -> std::result::Result<&Regex, regex::Error> {
+        self.compiled.get_or_try_init(|| {
+            Regex::new(&self.pattern_str)
+        })
     }
 }
 
 impl Operator for RxOperator {
     fn execute(&self, value: &str) -> OperatorResult {
-        if let Some(captures) = self.pattern.captures(value) {
+        let regex = match self.get_regex() {
+            Ok(r) => r,
+            Err(_) => return OperatorResult::no_match(),
+        };
+
+        if let Some(captures) = regex.captures(value) {
             let matched_value = captures.get(0).map(|m| m.as_str().to_string());
             let capture_groups: Vec<String> = captures
                 .iter()

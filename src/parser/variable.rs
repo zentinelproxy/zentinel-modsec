@@ -218,6 +218,22 @@ pub enum VariableName {
     // Auth
     /// Auth type.
     AuthType,
+
+    // Request body processing
+    /// Request body processor type (URLENCODED, MULTIPART, XML, JSON).
+    ReqBodyProcessor,
+    /// Request body processing error.
+    ReqBodyError,
+    /// Request body processing error message.
+    ReqBodyErrorMsg,
+    /// Request body processor error.
+    ReqBodyProcessorError,
+    /// Request body processor error message.
+    ReqBodyProcessorErrorMsg,
+
+    // Multipart strict
+    /// Multipart strict error.
+    MultipartStrictCheck,
 }
 
 impl VariableName {
@@ -294,6 +310,12 @@ impl VariableName {
             "FULL_REQUEST_LENGTH" => Some(Self::FullRequestLength),
             "AUTH_TYPE" => Some(Self::AuthType),
             "XML" => Some(Self::Xml),
+            "REQBODY_PROCESSOR" => Some(Self::ReqBodyProcessor),
+            "REQBODY_ERROR" => Some(Self::ReqBodyError),
+            "REQBODY_ERROR_MSG" => Some(Self::ReqBodyErrorMsg),
+            "REQBODY_PROCESSOR_ERROR" => Some(Self::ReqBodyProcessorError),
+            "REQBODY_PROCESSOR_ERROR_MSG" => Some(Self::ReqBodyProcessorErrorMsg),
+            "MULTIPART_STRICT_ERROR" => Some(Self::MultipartStrictCheck),
             _ => None,
         }
     }

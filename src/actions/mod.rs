@@ -174,6 +174,7 @@ fn execute_flow(action: &FlowAction) -> FlowOutcome {
         FlowAction::Chain => FlowOutcome::Chain,
         FlowAction::Skip(n) => FlowOutcome::Skip(*n),
         FlowAction::SkipAfter(marker) => FlowOutcome::SkipAfter(marker.clone()),
+        FlowAction::MultiMatch => FlowOutcome::Continue, // MultiMatch affects matching, not post-match flow
     }
 }
 

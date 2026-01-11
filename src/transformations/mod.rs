@@ -54,7 +54,9 @@ pub fn create_transformation(name: &str) -> Result<Arc<dyn Transformation>> {
         "normalizepath" => Ok(Arc::new(NormalizePath)),
         "normalizepathwin" => Ok(Arc::new(NormalizePathWin)),
         "removecomments" => Ok(Arc::new(RemoveComments)),
+        "replacecomments" => Ok(Arc::new(ReplaceComments)),
         "cmdline" => Ok(Arc::new(CmdLine)),
+        "removecommentschar" => Ok(Arc::new(RemoveCommentsChar)),
 
         // Hashing
         "md5" => Ok(Arc::new(Md5)),
@@ -63,6 +65,15 @@ pub fn create_transformation(name: &str) -> Result<Arc<dyn Transformation>> {
         // Special
         "length" => Ok(Arc::new(Length)),
         "none" => Ok(Arc::new(None_)),
+
+        // Additional CRS transformations
+        "sqlhexdecode" => Ok(Arc::new(SqlHexDecode)),
+        "utf8tounicode" => Ok(Arc::new(Utf8ToUnicode)),
+        "escapeseqdecode" => Ok(Arc::new(EscapeSeqDecode)),
+        "parityeven7bit" | "parityodd7bit" | "parityzero7bit" => {
+            Ok(Arc::new(None_)) // Placeholder - pass through
+        }
+        "sha256" => Ok(Arc::new(Sha256)),
 
         _ => Err(Error::UnknownTransformation { name: name.to_string() }),
     }

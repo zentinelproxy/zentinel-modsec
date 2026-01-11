@@ -302,6 +302,129 @@ impl Transformation for RemoveComments {
     }
 }
 
+/// Replace comments transformation (replaces /* ... */ with space).
+pub struct ReplaceComments;
+
+impl Transformation for ReplaceComments {
+    fn transform<'a>(&self, input: &'a str) -> Cow<'a, str> {
+        let mut result = String::new();
+        let mut in_comment = false;
+        let mut chars = input.chars().peekable();
+        let mut modified = false;
+
+        while let Some(c) = chars.next() {
+            if in_comment {
+                if c == '*' && chars.peek() == Some(&'/') {
+                    chars.next();
+                    in_comment = false;
+                    result.push(' '); // Replace comment with space
+                }
+            } else if c == '/' && chars.peek() == Some(&'*') {
+                chars.next();
+                in_comment = true;
+                modified = true;
+            } else {
+                result.push(c);
+            }
+        }
+
+        if modified {
+            Cow::Owned(result)
+        } else {
+            Cow::Borrowed(input)
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        "replaceComments"
+    }
+}
+
+/// Remove comment characters transformation.
+pub struct RemoveCommentsChar;
+
+impl Transformation for RemoveCommentsChar {
+    fn transform<'a>(&self, input: &'a str) -> Cow<'a, str> {
+        // Remove /*, */, --, and #
+        let mut result = input.to_string();
+        result = result.replace("/*", "");
+        result = result.replace("*/", "");
+        result = result.replace("--", "");
+        result = result.replace('#', "");
+
+        if result == input {
+            Cow::Borrowed(input)
+        } else {
+            Cow::Owned(result)
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        "removeCommentsChar"
+    }
+}
+
+/// SQL hex decode transformation.
+pub struct SqlHexDecode;
+
+impl Transformation for SqlHexDecode {
+    fn transform<'a>(&self, input: &'a str) -> Cow<'a, str> {
+        // Decode SQL hex strings like 0x41424344 to ABCD
+        let mut result = String::new();
+        let mut chars = input.chars().peekable();
+        let mut modified = false;
+
+        while let Some(c) = chars.next() {
+            if c == '0' && chars.peek() == Some(&'x') {
+                chars.next(); // consume 'x'
+                let mut hex = String::new();
+                while let Some(&next) = chars.peek() {
+                    if next.is_ascii_hexdigit() {
+                        hex.push(chars.next().unwrap());
+                    } else {
+                        break;
+                    }
+                }
+                // Decode hex pairs
+                let mut i = 0;
+                while i + 1 < hex.len() {
+                    if let Ok(byte) = u8::from_str_radix(&hex[i..i+2], 16) {
+                        result.push(byte as char);
+                    }
+                    i += 2;
+                }
+                modified = true;
+            } else {
+                result.push(c);
+            }
+        }
+
+        if modified {
+            Cow::Owned(result)
+        } else {
+            Cow::Borrowed(input)
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        "sqlHexDecode"
+    }
+}
+
+/// UTF-8 to Unicode transformation (pass-through for now).
+pub struct Utf8ToUnicode;
+
+impl Transformation for Utf8ToUnicode {
+    fn transform<'a>(&self, input: &'a str) -> Cow<'a, str> {
+        // In Rust strings are already UTF-8, this is a no-op
+        Cow::Borrowed(input)
+    }
+
+    fn name(&self) -> &'static str {
+        "utf8ToUnicode"
+    }
+}
+
 /// Command line normalization transformation.
 pub struct CmdLine;
 
@@ -347,6 +470,112 @@ impl Transformation for CmdLine {
 
     fn name(&self) -> &'static str {
         "cmdLine"
+    }
+}
+
+/// Escape sequence decode transformation.
+pub struct EscapeSeqDecode;
+
+impl Transformation for EscapeSeqDecode {
+    fn transform<'a>(&self, input: &'a str) -> Cow<'a, str> {
+        // Decode escape sequences like \n, \r, \t, \xHH, \uHHHH
+        let mut result = String::new();
+        let mut chars = input.chars().peekable();
+        let mut modified = false;
+
+        while let Some(c) = chars.next() {
+            if c == '\\' {
+                if let Some(&next) = chars.peek() {
+                    modified = true;
+                    chars.next();
+                    match next {
+                        'n' => result.push('\n'),
+                        'r' => result.push('\r'),
+                        't' => result.push('\t'),
+                        '\\' => result.push('\\'),
+                        '0' => result.push('\0'),
+                        'x' => {
+                            // Hex escape \xHH
+                            let mut hex = String::new();
+                            for _ in 0..2 {
+                                if let Some(&h) = chars.peek() {
+                                    if h.is_ascii_hexdigit() {
+                                        hex.push(chars.next().unwrap());
+                                    } else {
+                                        break;
+                                    }
+                                }
+                            }
+                            if let Ok(byte) = u8::from_str_radix(&hex, 16) {
+                                result.push(byte as char);
+                            } else {
+                                result.push('x');
+                                result.push_str(&hex);
+                            }
+                        }
+                        'u' => {
+                            // Unicode escape \uHHHH
+                            let mut hex = String::new();
+                            for _ in 0..4 {
+                                if let Some(&h) = chars.peek() {
+                                    if h.is_ascii_hexdigit() {
+                                        hex.push(chars.next().unwrap());
+                                    } else {
+                                        break;
+                                    }
+                                }
+                            }
+                            if let Ok(code) = u32::from_str_radix(&hex, 16) {
+                                if let Some(c) = char::from_u32(code) {
+                                    result.push(c);
+                                } else {
+                                    result.push('u');
+                                    result.push_str(&hex);
+                                }
+                            } else {
+                                result.push('u');
+                                result.push_str(&hex);
+                            }
+                        }
+                        _ => {
+                            result.push('\\');
+                            result.push(next);
+                        }
+                    }
+                } else {
+                    result.push(c);
+                }
+            } else {
+                result.push(c);
+            }
+        }
+
+        if modified {
+            Cow::Owned(result)
+        } else {
+            Cow::Borrowed(input)
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        "escapeSeqDecode"
+    }
+}
+
+/// SHA-256 hash transformation.
+pub struct Sha256;
+
+impl Transformation for Sha256 {
+    fn transform<'a>(&self, input: &'a str) -> Cow<'a, str> {
+        use sha2::{Digest, Sha256 as Sha256Hasher};
+        let mut hasher = Sha256Hasher::new();
+        hasher.update(input.as_bytes());
+        let result = hasher.finalize();
+        Cow::Owned(hex::encode(result))
+    }
+
+    fn name(&self) -> &'static str {
+        "sha256"
     }
 }
 

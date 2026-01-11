@@ -73,13 +73,35 @@ impl<'a> Lexer<'a> {
         c
     }
 
-    /// Skip whitespace (but not newlines).
+    /// Skip whitespace (but not newlines), including backslash-newline continuations.
     pub fn skip_whitespace(&mut self) {
-        while let Some(&c) = self.input.peek() {
-            if c == ' ' || c == '\t' {
-                self.advance();
-            } else {
-                break;
+        loop {
+            match self.input.peek() {
+                Some(&' ') | Some(&'\t') => {
+                    self.advance();
+                }
+                Some(&'\\') => {
+                    // Check for line continuation
+                    let mut chars = self.input.clone();
+                    chars.next(); // consume the backslash
+                    if chars.peek() == Some(&'\n') {
+                        self.advance(); // consume backslash
+                        self.advance(); // consume newline
+                        // Continue skipping whitespace on next line
+                    } else if chars.peek() == Some(&'\r') {
+                        chars.next();
+                        if chars.peek() == Some(&'\n') {
+                            self.advance(); // consume backslash
+                            self.advance(); // consume \r
+                            self.advance(); // consume \n
+                        } else {
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+                _ => break,
             }
         }
     }
@@ -164,7 +186,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    /// Read a quoted string.
+    /// Read a quoted string, handling line continuation.
     fn read_quoted_string(&mut self, quote: char) -> String {
         let mut s = String::new();
         let mut escaped = false;
@@ -172,6 +194,22 @@ impl<'a> Lexer<'a> {
         while let Some(c) = self.advance() {
             if escaped {
                 match c {
+                    '\n' => {
+                        // Line continuation inside quoted string - skip newline and leading whitespace
+                        while self.peek().map(|c| c == ' ' || c == '\t').unwrap_or(false) {
+                            self.advance();
+                        }
+                    }
+                    '\r' => {
+                        // Handle Windows line endings
+                        if self.peek() == Some('\n') {
+                            self.advance();
+                        }
+                        // Skip leading whitespace
+                        while self.peek().map(|c| c == ' ' || c == '\t').unwrap_or(false) {
+                            self.advance();
+                        }
+                    }
                     'n' => s.push('\n'),
                     't' => s.push('\t'),
                     'r' => s.push('\r'),

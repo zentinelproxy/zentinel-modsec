@@ -51,6 +51,8 @@ pub enum FlowAction {
     Skip(u32),
     /// Skip to marker.
     SkipAfter(String),
+    /// Run operator on each value separately.
+    MultiMatch,
 }
 
 /// Metadata actions.
@@ -163,10 +165,49 @@ pub struct ControlAction {
     pub value: String,
 }
 
+/// Normalize line continuations in an action string.
+/// CRS rules often use backslash-newline to split long action lists across multiple lines.
+fn normalize_line_continuations(input: &str) -> String {
+    let mut result = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            // Check if this is a line continuation
+            if chars.peek() == Some(&'\n') {
+                // Skip the backslash and newline
+                chars.next();
+                // Skip any leading whitespace on the next line
+                while chars.peek().map(|c| c.is_whitespace() && *c != '\n').unwrap_or(false) {
+                    chars.next();
+                }
+                continue;
+            } else if chars.peek() == Some(&'\r') {
+                // Handle Windows-style line endings
+                chars.next();
+                if chars.peek() == Some(&'\n') {
+                    chars.next();
+                }
+                // Skip any leading whitespace on the next line
+                while chars.peek().map(|c| c.is_whitespace() && *c != '\n').unwrap_or(false) {
+                    chars.next();
+                }
+                continue;
+            }
+        }
+        result.push(c);
+    }
+
+    result
+}
+
 /// Parse an action list from a string.
 pub fn parse_actions(input: &str) -> Result<Vec<Action>> {
+    // First, normalize line continuations (backslash followed by newline and optional whitespace)
+    let normalized = normalize_line_continuations(input);
+
     let mut actions = Vec::new();
-    let mut chars = input.chars().peekable();
+    let mut chars = normalized.chars().peekable();
     let mut current = String::new();
     let mut in_quotes = false;
     let mut quote_char = '"';
@@ -288,6 +329,7 @@ fn parse_single_action(input: &str) -> Result<Action> {
         "severity" => {
             let sev: u8 = argument
                 .as_ref()
+                .map(|s| s.trim_matches(|c| c == '\'' || c == '"'))
                 .and_then(|s| parse_severity(s))
                 .ok_or_else(|| Error::InvalidActionArgument {
                     action: "severity".to_string(),
@@ -383,6 +425,62 @@ fn parse_single_action(input: &str) -> Result<Action> {
             };
             Ok(Action::Control(ControlAction { directive, value }))
         }
+
+        // initcol:collection=key - initialize a persistent collection
+        "initcol" => {
+            let spec = argument.ok_or_else(|| Error::InvalidActionArgument {
+                action: "initcol".to_string(),
+                message: "missing collection specification".to_string(),
+            })?;
+            let (collection, key) = if let Some(pos) = spec.find('=') {
+                (spec[..pos].to_string(), spec[pos + 1..].to_string())
+            } else {
+                (spec, String::new())
+            };
+            Ok(Action::Data(DataAction::InitCol { collection, key }))
+        }
+
+        // setsid/setuid - set session/user ID
+        "setsid" | "setuid" => {
+            // These are used for persistent storage, we'll just acknowledge them
+            Ok(Action::Logging(LoggingAction::NoAuditLog)) // Placeholder - doesn't affect rule matching
+        }
+
+        // deprecatevar - deprecated variable handling
+        "deprecatevar" => {
+            Ok(Action::Logging(LoggingAction::NoAuditLog)) // Placeholder
+        }
+
+        // expirevar - set variable expiration
+        "expirevar" => {
+            let spec = argument.unwrap_or_default();
+            let (var, seconds) = if let Some(pos) = spec.find('=') {
+                let var = spec[..pos].to_string();
+                let secs: u64 = spec[pos + 1..].parse().unwrap_or(0);
+                (var, secs)
+            } else {
+                (spec, 0)
+            };
+            Ok(Action::Data(DataAction::ExpireVar { var, seconds }))
+        }
+
+        // multimatch - run operator multiple times for each value
+        "multimatch" => Ok(Action::Flow(FlowAction::MultiMatch)),
+
+        // exec - execute an external script (acknowledged but not executed)
+        "exec" => Ok(Action::Logging(LoggingAction::NoAuditLog)), // Placeholder
+
+        // append/prepend - append/prepend to response body (acknowledged)
+        "append" | "prepend" => Ok(Action::Logging(LoggingAction::NoAuditLog)), // Placeholder
+
+        // proxy - proxy request (acknowledged)
+        "proxy" => Ok(Action::Logging(LoggingAction::NoAuditLog)), // Placeholder
+
+        // pause - pause processing (acknowledged)
+        "pause" => Ok(Action::Logging(LoggingAction::NoAuditLog)), // Placeholder
+
+        // xmlns - XML namespace (acknowledged)
+        "xmlns" => Ok(Action::Logging(LoggingAction::NoAuditLog)), // Placeholder
 
         _ => Err(Error::UnknownAction {
             name: name.to_string(),

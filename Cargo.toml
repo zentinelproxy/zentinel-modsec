@@ -29,9 +29,11 @@ aho-corasick = "1.1"
 # IP address matching
 ipnetwork = "0.20"
 
-# Hashing (for md5/sha1 transformations)
+# Hashing (for md5/sha1/sha2 transformations)
 md-5 = "0.10"
 sha1 = "0.10"
+sha2 = "0.10"
+hex = "0.4"
 
 # HTML entity decoding
 html-escape = "0.2"

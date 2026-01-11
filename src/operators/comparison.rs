@@ -112,27 +112,39 @@ impl Operator for StreqOperator {
 }
 
 /// Numeric equals operator (@eq).
+/// Supports both numeric literals and variable references (e.g., %{tx.var}).
 pub struct EqOperator {
-    value: i64,
+    /// The argument (may be a number or variable reference).
+    arg: String,
 }
 
 impl EqOperator {
-    pub fn new(value: &str) -> Result<Self> {
-        let v = value.parse().map_err(|_| Error::InvalidActionArgument {
-            action: "eq".to_string(),
-            message: format!("invalid number: {}", value),
-        })?;
-        Ok(Self { value: v })
+    pub fn new(value: &str) -> Self {
+        Self {
+            arg: value.to_string(),
+        }
+    }
+
+    fn target_value(&self) -> Option<i64> {
+        // If it's a variable reference, we can't resolve it statically
+        if self.arg.contains("%{") {
+            return None;
+        }
+        self.arg.parse().ok()
     }
 }
 
 impl Operator for EqOperator {
     fn execute(&self, value: &str) -> OperatorResult {
-        if let Ok(n) = value.parse::<i64>() {
-            if n == self.value {
-                return OperatorResult::matched(value.to_string());
+        if let Some(target) = self.target_value() {
+            if let Ok(n) = value.parse::<i64>() {
+                if n == target {
+                    return OperatorResult::matched(value.to_string());
+                }
             }
         }
+        // For variable references, comparison would need runtime resolution
+        // For now, we don't match if we can't resolve
         OperatorResult::no_match()
     }
 
@@ -143,24 +155,31 @@ impl Operator for EqOperator {
 
 /// Greater than operator (@gt).
 pub struct GtOperator {
-    value: i64,
+    arg: String,
 }
 
 impl GtOperator {
-    pub fn new(value: &str) -> Result<Self> {
-        let v = value.parse().map_err(|_| Error::InvalidActionArgument {
-            action: "gt".to_string(),
-            message: format!("invalid number: {}", value),
-        })?;
-        Ok(Self { value: v })
+    pub fn new(value: &str) -> Self {
+        Self {
+            arg: value.to_string(),
+        }
+    }
+
+    fn target_value(&self) -> Option<i64> {
+        if self.arg.contains("%{") {
+            return None;
+        }
+        self.arg.parse().ok()
     }
 }
 
 impl Operator for GtOperator {
     fn execute(&self, value: &str) -> OperatorResult {
-        if let Ok(n) = value.parse::<i64>() {
-            if n > self.value {
-                return OperatorResult::matched(value.to_string());
+        if let Some(target) = self.target_value() {
+            if let Ok(n) = value.parse::<i64>() {
+                if n > target {
+                    return OperatorResult::matched(value.to_string());
+                }
             }
         }
         OperatorResult::no_match()
@@ -173,24 +192,31 @@ impl Operator for GtOperator {
 
 /// Less than operator (@lt).
 pub struct LtOperator {
-    value: i64,
+    arg: String,
 }
 
 impl LtOperator {
-    pub fn new(value: &str) -> Result<Self> {
-        let v = value.parse().map_err(|_| Error::InvalidActionArgument {
-            action: "lt".to_string(),
-            message: format!("invalid number: {}", value),
-        })?;
-        Ok(Self { value: v })
+    pub fn new(value: &str) -> Self {
+        Self {
+            arg: value.to_string(),
+        }
+    }
+
+    fn target_value(&self) -> Option<i64> {
+        if self.arg.contains("%{") {
+            return None;
+        }
+        self.arg.parse().ok()
     }
 }
 
 impl Operator for LtOperator {
     fn execute(&self, value: &str) -> OperatorResult {
-        if let Ok(n) = value.parse::<i64>() {
-            if n < self.value {
-                return OperatorResult::matched(value.to_string());
+        if let Some(target) = self.target_value() {
+            if let Ok(n) = value.parse::<i64>() {
+                if n < target {
+                    return OperatorResult::matched(value.to_string());
+                }
             }
         }
         OperatorResult::no_match()
@@ -203,24 +229,31 @@ impl Operator for LtOperator {
 
 /// Greater than or equal operator (@ge).
 pub struct GeOperator {
-    value: i64,
+    arg: String,
 }
 
 impl GeOperator {
-    pub fn new(value: &str) -> Result<Self> {
-        let v = value.parse().map_err(|_| Error::InvalidActionArgument {
-            action: "ge".to_string(),
-            message: format!("invalid number: {}", value),
-        })?;
-        Ok(Self { value: v })
+    pub fn new(value: &str) -> Self {
+        Self {
+            arg: value.to_string(),
+        }
+    }
+
+    fn target_value(&self) -> Option<i64> {
+        if self.arg.contains("%{") {
+            return None;
+        }
+        self.arg.parse().ok()
     }
 }
 
 impl Operator for GeOperator {
     fn execute(&self, value: &str) -> OperatorResult {
-        if let Ok(n) = value.parse::<i64>() {
-            if n >= self.value {
-                return OperatorResult::matched(value.to_string());
+        if let Some(target) = self.target_value() {
+            if let Ok(n) = value.parse::<i64>() {
+                if n >= target {
+                    return OperatorResult::matched(value.to_string());
+                }
             }
         }
         OperatorResult::no_match()
@@ -233,24 +266,31 @@ impl Operator for GeOperator {
 
 /// Less than or equal operator (@le).
 pub struct LeOperator {
-    value: i64,
+    arg: String,
 }
 
 impl LeOperator {
-    pub fn new(value: &str) -> Result<Self> {
-        let v = value.parse().map_err(|_| Error::InvalidActionArgument {
-            action: "le".to_string(),
-            message: format!("invalid number: {}", value),
-        })?;
-        Ok(Self { value: v })
+    pub fn new(value: &str) -> Self {
+        Self {
+            arg: value.to_string(),
+        }
+    }
+
+    fn target_value(&self) -> Option<i64> {
+        if self.arg.contains("%{") {
+            return None;
+        }
+        self.arg.parse().ok()
     }
 }
 
 impl Operator for LeOperator {
     fn execute(&self, value: &str) -> OperatorResult {
-        if let Ok(n) = value.parse::<i64>() {
-            if n <= self.value {
-                return OperatorResult::matched(value.to_string());
+        if let Some(target) = self.target_value() {
+            if let Ok(n) = value.parse::<i64>() {
+                if n <= target {
+                    return OperatorResult::matched(value.to_string());
+                }
             }
         }
         OperatorResult::no_match()
@@ -295,15 +335,15 @@ mod tests {
 
     #[test]
     fn test_numeric_operators() {
-        let eq = EqOperator::new("10").unwrap();
+        let eq = EqOperator::new("10");
         assert!(eq.execute("10").matched);
         assert!(!eq.execute("11").matched);
 
-        let gt = GtOperator::new("10").unwrap();
+        let gt = GtOperator::new("10");
         assert!(gt.execute("11").matched);
         assert!(!gt.execute("10").matched);
 
-        let lt = LtOperator::new("10").unwrap();
+        let lt = LtOperator::new("10");
         assert!(lt.execute("9").matched);
         assert!(!lt.execute("10").matched);
     }

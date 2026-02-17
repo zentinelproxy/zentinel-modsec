@@ -1,12 +1,12 @@
-//! sentinel-modsec CLI tool.
+//! zentinel-modsec CLI tool.
 
 use clap::{Parser, Subcommand};
-use sentinel_modsec::{ModSecurity, Result, Transaction};
+use zentinel_modsec::{ModSecurity, Result, Transaction};
 use std::path::PathBuf;
 use tracing::{error, info};
 
 #[derive(Parser)]
-#[command(name = "sentinel-modsec")]
+#[command(name = "zentinel-modsec")]
 #[command(author, version, about, long_about = None)]
 struct Cli {
     /// Increase logging verbosity
@@ -164,7 +164,7 @@ fn dump_rules(path: &PathBuf) -> Result<()> {
     println!("\nRules by phase:");
 
     for phase_num in 1..=5 {
-        if let Some(phase) = sentinel_modsec::engine::phase::Phase::from_number(phase_num) {
+        if let Some(phase) = zentinel_modsec::engine::phase::Phase::from_number(phase_num) {
             let rules = modsec.ruleset().rules_for_phase(phase);
             if !rules.is_empty() {
                 println!("\n  Phase {} ({}):", phase_num, phase.name());

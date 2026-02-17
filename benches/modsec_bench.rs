@@ -1,10 +1,10 @@
-//! Benchmarks for sentinel-modsec performance.
+//! Benchmarks for zentinel-modsec performance.
 //!
 //! Run with: cargo bench
 //! Compare with libmodsecurity: cargo bench --features libmodsec-compare
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId, Throughput};
-use sentinel_modsec::ModSecurity;
+use zentinel_modsec::ModSecurity;
 use std::time::Duration;
 
 // ============================================================================
@@ -247,8 +247,8 @@ fn bench_body_processing(c: &mut Criterion) {
 // ============================================================================
 
 fn bench_operators(c: &mut Criterion) {
-    use sentinel_modsec::operators::{Operator, create_operator};
-    use sentinel_modsec::parser::OperatorName;
+    use zentinel_modsec::operators::{Operator, create_operator};
+    use zentinel_modsec::parser::OperatorName;
 
     let mut group = c.benchmark_group("operators");
 
@@ -305,7 +305,7 @@ fn bench_operators(c: &mut Criterion) {
 // ============================================================================
 
 fn bench_transformations(c: &mut Criterion) {
-    use sentinel_modsec::transformations::{Transformation, create_transformation};
+    use zentinel_modsec::transformations::{Transformation, create_transformation};
 
     let mut group = c.benchmark_group("transformations");
 

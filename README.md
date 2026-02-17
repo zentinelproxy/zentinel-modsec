@@ -1,8 +1,8 @@
-# sentinel-modsec
+# zentinel-modsec
 
-[![Crates.io](https://img.shields.io/crates/v/sentinel-modsec.svg)](https://crates.io/crates/sentinel-modsec)
-[![Documentation](https://docs.rs/sentinel-modsec/badge.svg)](https://docs.rs/sentinel-modsec)
-[![License](https://img.shields.io/crates/l/sentinel-modsec.svg)](LICENSE)
+[![Crates.io](https://img.shields.io/crates/v/zentinel-modsec.svg)](https://crates.io/crates/zentinel-modsec)
+[![Documentation](https://docs.rs/zentinel-modsec/badge.svg)](https://docs.rs/zentinel-modsec)
+[![License](https://img.shields.io/crates/l/zentinel-modsec.svg)](LICENSE)
 
 **Pure Rust ModSecurity implementation with full OWASP CRS compatibility.**
 
@@ -10,7 +10,7 @@ A complete ModSecurity rule engine written in Rust with zero C/C++ dependencies.
 
 ## Performance: 10-30x Faster than libmodsecurity
 
-| Benchmark | sentinel-modsec | libmodsecurity (C++) | Speedup |
+| Benchmark | zentinel-modsec | libmodsecurity (C++) | Speedup |
 |-----------|-----------------|----------------------|---------|
 | Clean request | 161 ns | 4,831 ns | **30x faster** |
 | SQLi detection | 295 ns | 5,545 ns | **19x faster** |
@@ -36,15 +36,15 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-sentinel-modsec = "0.1"
+zentinel-modsec = "0.1"
 ```
 
 ### Basic Usage
 
 ```rust
-use sentinel_modsec::{ModSecurity, Rules, Transaction};
+use zentinel_modsec::{ModSecurity, Rules, Transaction};
 
-fn main() -> sentinel_modsec::Result<()> {
+fn main() -> zentinel_modsec::Result<()> {
     // Create the ModSecurity engine
     let modsec = ModSecurity::new();
 
@@ -80,9 +80,9 @@ fn main() -> sentinel_modsec::Result<()> {
 ### Loading OWASP CRS Rules
 
 ```rust
-use sentinel_modsec::{ModSecurity, Rules};
+use zentinel_modsec::{ModSecurity, Rules};
 
-fn main() -> sentinel_modsec::Result<()> {
+fn main() -> zentinel_modsec::Result<()> {
     let modsec = ModSecurity::new();
 
     let mut rules = Rules::new();
@@ -104,9 +104,9 @@ fn main() -> sentinel_modsec::Result<()> {
 ### SQL Injection Detection
 
 ```rust
-use sentinel_modsec::{ModSecurity, Rules};
+use zentinel_modsec::{ModSecurity, Rules};
 
-fn main() -> sentinel_modsec::Result<()> {
+fn main() -> zentinel_modsec::Result<()> {
     let modsec = ModSecurity::new();
 
     let mut rules = Rules::new();
@@ -133,9 +133,9 @@ fn main() -> sentinel_modsec::Result<()> {
 ### XSS Detection
 
 ```rust
-use sentinel_modsec::{ModSecurity, Rules};
+use zentinel_modsec::{ModSecurity, Rules};
 
-fn main() -> sentinel_modsec::Result<()> {
+fn main() -> zentinel_modsec::Result<()> {
     let modsec = ModSecurity::new();
 
     let mut rules = Rules::new();
@@ -161,9 +161,9 @@ fn main() -> sentinel_modsec::Result<()> {
 ### Request Body Inspection
 
 ```rust
-use sentinel_modsec::{ModSecurity, Rules};
+use zentinel_modsec::{ModSecurity, Rules};
 
-fn main() -> sentinel_modsec::Result<()> {
+fn main() -> zentinel_modsec::Result<()> {
     let modsec = ModSecurity::new();
 
     let mut rules = Rules::new();
@@ -194,9 +194,9 @@ fn main() -> sentinel_modsec::Result<()> {
 ### Detection-Only Mode
 
 ```rust
-use sentinel_modsec::{ModSecurity, Rules};
+use zentinel_modsec::{ModSecurity, Rules};
 
-fn main() -> sentinel_modsec::Result<()> {
+fn main() -> zentinel_modsec::Result<()> {
     let modsec = ModSecurity::new();
 
     let mut rules = Rules::new();
@@ -224,9 +224,9 @@ fn main() -> sentinel_modsec::Result<()> {
 ### Anomaly Scoring
 
 ```rust
-use sentinel_modsec::{ModSecurity, Rules};
+use zentinel_modsec::{ModSecurity, Rules};
 
-fn main() -> sentinel_modsec::Result<()> {
+fn main() -> zentinel_modsec::Result<()> {
     let modsec = ModSecurity::new();
 
     let mut rules = Rules::new();
@@ -272,7 +272,7 @@ use axum::{
     routing::get,
     Router,
 };
-use sentinel_modsec::{ModSecurity, CompiledRuleset};
+use zentinel_modsec::{ModSecurity, CompiledRuleset};
 use std::sync::Arc;
 
 async fn waf_middleware(
@@ -309,7 +309,7 @@ async fn waf_middleware(
 
 #[tokio::main]
 async fn main() {
-    let mut rules = sentinel_modsec::Rules::new();
+    let mut rules = zentinel_modsec::Rules::new();
     rules.add_file("/etc/modsecurity/crs/rules/*.conf").unwrap();
     let ruleset = Arc::new(rules.compile().unwrap());
 
@@ -327,7 +327,7 @@ async fn main() {
 
 ```rust
 use actix_web::{web, App, HttpServer, HttpRequest, HttpResponse, middleware};
-use sentinel_modsec::{ModSecurity, CompiledRuleset};
+use zentinel_modsec::{ModSecurity, CompiledRuleset};
 use std::sync::Arc;
 
 async fn waf_check(
@@ -436,7 +436,7 @@ async fn waf_check(
 1. **Performance** - 10-30x faster than C++ libmodsecurity
 2. **Safety** - Memory safety guaranteed, no buffer overflows
 3. **Portability** - Runs anywhere Rust compiles (including WASM)
-4. **Simplicity** - `cargo add sentinel-modsec`, no system dependencies
+4. **Simplicity** - `cargo add zentinel-modsec`, no system dependencies
 5. **Auditability** - Single-language codebase, easier security review
 
 ### Technical Optimizations
@@ -462,7 +462,7 @@ rules.add_file("/etc/modsecurity/crs/rules/*.conf")?;
 
 ## Comparison
 
-| Feature | sentinel-modsec | libmodsecurity | mod_security |
+| Feature | zentinel-modsec | libmodsecurity | mod_security |
 |---------|-----------------|----------------|--------------|
 | Language | Pure Rust | C++ | C |
 | Dependencies | None | PCRE, libxml2, etc. | Apache/nginx |
@@ -481,6 +481,6 @@ Contributions welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for guidel
 
 ## Related Projects
 
-- [Sentinel](https://sentinel.raskell.io) - Extensible reverse proxy using this engine
+- [Zentinel](https://zentinelproxy.io) - Extensible reverse proxy using this engine
 - [OWASP CRS](https://coreruleset.org) - Core Rule Set for ModSecurity
 - [libmodsecurity](https://github.com/SpiderLabs/ModSecurity) - Original C++ implementation

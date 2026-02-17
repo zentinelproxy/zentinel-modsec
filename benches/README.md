@@ -1,6 +1,6 @@
-# sentinel-modsec Benchmarks
+# zentinel-modsec Benchmarks
 
-Performance comparison between sentinel-modsec (pure Rust) and libmodsecurity (C++).
+Performance comparison between zentinel-modsec (pure Rust) and libmodsecurity (C++).
 
 ## Benchmark Categories
 

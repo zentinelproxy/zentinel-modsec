@@ -1,4 +1,4 @@
-//! # sentinel-modsec
+//! # zentinel-modsec
 //!
 //! Pure Rust implementation of ModSecurity with full OWASP CRS compatibility.
 //!
@@ -16,7 +16,7 @@
 //! ## Quick Start
 //!
 //! ```ignore
-//! use sentinel_modsec::{ModSecurity, Rules, Transaction};
+//! use zentinel_modsec::{ModSecurity, Rules, Transaction};
 //!
 //! // Create engine and load rules
 //! let modsec = ModSecurity::new();

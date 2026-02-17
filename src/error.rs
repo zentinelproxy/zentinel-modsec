@@ -1,4 +1,4 @@
-//! Error types for sentinel-modsec.
+//! Error types for zentinel-modsec.
 
 use std::path::PathBuf;
 use thiserror::Error;
@@ -6,7 +6,7 @@ use thiserror::Error;
 /// Result type alias using the crate's Error type.
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// Main error type for sentinel-modsec operations.
+/// Main error type for zentinel-modsec operations.
 #[derive(Debug, Error)]
 pub enum Error {
     /// Error parsing a SecRule directive.

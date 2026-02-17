@@ -1,24 +1,24 @@
 [package]
-name = "sentinel-modsec"
+name = "zentinel-modsec"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.75"
-authors = ["Sentinel Contributors"]
+authors = ["Zentinel Contributors"]
 license = "Apache-2.0"
-repository = "https://github.com/raskell-io/sentinel-modsec"
-homepage = "https://sentinel.raskell.io"
-documentation = "https://sentinel.raskell.io/docs/sentinel-modsec"
+repository = "https://github.com/zentinelproxy/zentinel-modsec"
+homepage = "https://zentinelproxy.io"
+documentation = "https://zentinelproxy.io/docs/zentinel-modsec"
 description = "Pure Rust ModSecurity implementation with full OWASP CRS compatibility"
 keywords = ["modsecurity", "waf", "security", "owasp", "crs"]
 categories = ["network-programming", "web-programming"]
 readme = "README.md"
 
 [lib]
-name = "sentinel_modsec"
+name = "zentinel_modsec"
 path = "src/lib.rs"
 
 [[bin]]
-name = "sentinel-modsec"
+name = "zentinel-modsec"
 path = "src/main.rs"
 
 [dependencies]

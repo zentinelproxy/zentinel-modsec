@@ -75,7 +75,7 @@ impl LibModSecurity {
     fn new() -> Self {
         unsafe {
             let msc = msc_init();
-            let info = CString::new("sentinel-modsec-bench").unwrap();
+            let info = CString::new("zentinel-modsec-bench").unwrap();
             msc_set_connector_info(msc, info.as_ptr());
             Self { msc }
         }
@@ -249,10 +249,10 @@ const SQLI_PAYLOADS: &[&str] = &[
 fn bench_parsing_comparison(c: &mut Criterion) {
     let mut group = c.benchmark_group("parsing_comparison");
 
-    // sentinel-modsec
-    group.bench_function("sentinel/simple_rule", |b| {
+    // zentinel-modsec
+    group.bench_function("zentinel/simple_rule", |b| {
         b.iter(|| {
-            sentinel_modsec::ModSecurity::from_string(black_box(SIMPLE_RULE)).unwrap()
+            zentinel_modsec::ModSecurity::from_string(black_box(SIMPLE_RULE)).unwrap()
         })
     });
 
@@ -268,9 +268,9 @@ fn bench_parsing_comparison(c: &mut Criterion) {
     });
 
     // Complex rule
-    group.bench_function("sentinel/complex_rule", |b| {
+    group.bench_function("zentinel/complex_rule", |b| {
         b.iter(|| {
-            sentinel_modsec::ModSecurity::from_string(black_box(COMPLEX_RULE)).unwrap()
+            zentinel_modsec::ModSecurity::from_string(black_box(COMPLEX_RULE)).unwrap()
         })
     });
 
@@ -291,18 +291,18 @@ fn bench_transaction_comparison(c: &mut Criterion) {
     let mut group = c.benchmark_group("transaction_comparison");
     group.measurement_time(Duration::from_secs(10));
 
-    // Setup sentinel-modsec
-    let sentinel = sentinel_modsec::ModSecurity::from_string(COMPLEX_RULE).unwrap();
+    // Setup zentinel-modsec
+    let zentinel = zentinel_modsec::ModSecurity::from_string(COMPLEX_RULE).unwrap();
 
     // Setup libmodsecurity
     let libmsc = LibModSecurity::new();
     let librules = LibRules::new();
     librules.add_rules(COMPLEX_RULE).unwrap();
 
-    // Clean request - sentinel
-    group.bench_function("sentinel/clean_request", |b| {
+    // Clean request - zentinel
+    group.bench_function("zentinel/clean_request", |b| {
         b.iter(|| {
-            let mut tx = sentinel.new_transaction();
+            let mut tx = zentinel.new_transaction();
             tx.process_uri(black_box("/api/users"), "GET", "HTTP/1.1").unwrap();
             tx.add_request_header("Host", "example.com").unwrap();
             tx.process_request_headers().unwrap();
@@ -321,10 +321,10 @@ fn bench_transaction_comparison(c: &mut Criterion) {
         })
     });
 
-    // SQLi request - sentinel
-    group.bench_function("sentinel/sqli_request", |b| {
+    // SQLi request - zentinel
+    group.bench_function("zentinel/sqli_request", |b| {
         b.iter(|| {
-            let mut tx = sentinel.new_transaction();
+            let mut tx = zentinel.new_transaction();
             tx.process_uri(black_box("/api/users?id=1' OR '1'='1"), "GET", "HTTP/1.1").unwrap();
             tx.add_request_header("Host", "example.com").unwrap();
             tx.process_request_headers().unwrap();
@@ -349,8 +349,8 @@ fn bench_transaction_comparison(c: &mut Criterion) {
 fn bench_body_comparison(c: &mut Criterion) {
     let mut group = c.benchmark_group("body_comparison");
 
-    // Setup sentinel-modsec
-    let sentinel = sentinel_modsec::ModSecurity::from_string(SQLI_RULE).unwrap();
+    // Setup zentinel-modsec
+    let zentinel = zentinel_modsec::ModSecurity::from_string(SQLI_RULE).unwrap();
 
     // Setup libmodsecurity
     let libmsc = LibModSecurity::new();
@@ -359,10 +359,10 @@ fn bench_body_comparison(c: &mut Criterion) {
 
     let body = b"username=admin&password=' OR '1'='1' --";
 
-    // sentinel
-    group.bench_function("sentinel/post_body_sqli", |b| {
+    // zentinel
+    group.bench_function("zentinel/post_body_sqli", |b| {
         b.iter(|| {
-            let mut tx = sentinel.new_transaction();
+            let mut tx = zentinel.new_transaction();
             tx.process_uri("/api/login", "POST", "HTTP/1.1").unwrap();
             tx.add_request_header("Host", "example.com").unwrap();
             tx.add_request_header("Content-Type", "application/x-www-form-urlencoded").unwrap();
@@ -394,22 +394,22 @@ fn bench_throughput_comparison(c: &mut Criterion) {
     let mut group = c.benchmark_group("throughput_comparison");
     group.measurement_time(Duration::from_secs(15));
 
-    // Setup sentinel-modsec
-    let sentinel = sentinel_modsec::ModSecurity::from_string(COMPLEX_RULE).unwrap();
+    // Setup zentinel-modsec
+    let zentinel = zentinel_modsec::ModSecurity::from_string(COMPLEX_RULE).unwrap();
 
     // Setup libmodsecurity
     let libmsc = LibModSecurity::new();
     let librules = LibRules::new();
     librules.add_rules(COMPLEX_RULE).unwrap();
 
-    // Clean traffic - sentinel
-    group.bench_function("sentinel/clean_traffic", |b| {
+    // Clean traffic - zentinel
+    group.bench_function("zentinel/clean_traffic", |b| {
         let mut idx = 0;
         b.iter(|| {
             let (uri, method) = CLEAN_REQUESTS[idx % CLEAN_REQUESTS.len()];
             idx += 1;
 
-            let mut tx = sentinel.new_transaction();
+            let mut tx = zentinel.new_transaction();
             tx.process_uri(black_box(uri), method, "HTTP/1.1").unwrap();
             tx.add_request_header("Host", "example.com").unwrap();
             tx.process_request_headers().unwrap();
@@ -432,14 +432,14 @@ fn bench_throughput_comparison(c: &mut Criterion) {
         })
     });
 
-    // Attack traffic - sentinel
-    group.bench_function("sentinel/attack_traffic", |b| {
+    // Attack traffic - zentinel
+    group.bench_function("zentinel/attack_traffic", |b| {
         let mut idx = 0;
         b.iter(|| {
             let uri = SQLI_PAYLOADS[idx % SQLI_PAYLOADS.len()];
             idx += 1;
 
-            let mut tx = sentinel.new_transaction();
+            let mut tx = zentinel.new_transaction();
             tx.process_uri(black_box(uri), "GET", "HTTP/1.1").unwrap();
             tx.add_request_header("Host", "example.com").unwrap();
             tx.process_request_headers().unwrap();

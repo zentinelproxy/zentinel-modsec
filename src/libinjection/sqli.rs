@@ -578,14 +578,14 @@ fn has_dangerous_patterns(tokens: &[Token]) -> bool {
     }
 
     // Check for tautology (1=1, 'a'='a')
-    for window in tokens.windows(3) {
-        if window[1].token_type == TokenType::Operator && window[1].value == "=" {
-            if (window[0].token_type == TokenType::Number
-                && window[2].token_type == TokenType::Number
-                && window[0].value == window[2].value)
-                || (window[0].token_type == TokenType::String
-                    && window[2].token_type == TokenType::String
-                    && window[0].value == window[2].value)
+    for [left, op, right] in tokens.array_windows() {
+        if op.token_type == TokenType::Operator && op.value == "=" {
+            if (left.token_type == TokenType::Number
+                && right.token_type == TokenType::Number
+                && left.value == right.value)
+                || (left.token_type == TokenType::String
+                    && right.token_type == TokenType::String
+                    && left.value == right.value)
             {
                 return true;
             }

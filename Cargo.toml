@@ -27,7 +27,7 @@ regex = "1.10"
 aho-corasick = "1.1"
 
 # IP address matching
-ipnetwork = "0.20"
+ipnetwork = "0.21"
 
 # Hashing (for md5/sha1/sha2 transformations)
 md-5 = "0.10"
@@ -59,10 +59,10 @@ clap = { version = "4.5", features = ["derive", "env"] }
 once_cell = "1.19"
 
 # Perfect hash function for fast lookups
-phf = { version = "0.11", features = ["macros"] }
+phf = { version = "0.13", features = ["macros"] }
 
 # Optional: geolocation
-maxminddb = { version = "0.24", optional = true }
+maxminddb = { version = "0.27", optional = true }
 
 [features]
 default = []
@@ -71,7 +71,7 @@ geo = ["maxminddb"]
 libmodsec-compare = []
 
 [dev-dependencies]
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.8", features = ["html_reports"] }
 
 [[bench]]
 name = "modsec_bench"

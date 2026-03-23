@@ -578,7 +578,8 @@ fn has_dangerous_patterns(tokens: &[Token]) -> bool {
     }
 
     // Check for tautology (1=1, 'a'='a')
-    for [left, op, right] in tokens.array_windows() {
+    for window in tokens.windows(3) {
+        let (left, op, right) = (&window[0], &window[1], &window[2]);
         if op.token_type == TokenType::Operator && op.value == "=" {
             if (left.token_type == TokenType::Number
                 && right.token_type == TokenType::Number

@@ -74,6 +74,7 @@ libmodsec-compare = []
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
+tempfile = "3"
 
 [[bench]]
 name = "modsec_bench"

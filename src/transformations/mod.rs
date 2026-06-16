@@ -51,8 +51,9 @@ pub fn create_transformation(name: &str) -> Result<Arc<dyn Transformation>> {
         "trim" => Ok(Arc::new(Trim)),
         "trimleft" => Ok(Arc::new(TrimLeft)),
         "trimright" => Ok(Arc::new(TrimRight)),
-        "normalizepath" => Ok(Arc::new(NormalizePath)),
-        "normalizepathwin" => Ok(Arc::new(NormalizePathWin)),
+        // CRS uses the British spelling (normalise*); accept both.
+        "normalizepath" | "normalisepath" => Ok(Arc::new(NormalizePath)),
+        "normalizepathwin" | "normalisepathwin" => Ok(Arc::new(NormalizePathWin)),
         "removecomments" => Ok(Arc::new(RemoveComments)),
         "replacecomments" => Ok(Arc::new(ReplaceComments)),
         "cmdline" => Ok(Arc::new(CmdLine)),

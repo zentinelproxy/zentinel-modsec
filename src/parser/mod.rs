@@ -145,6 +145,12 @@ impl Parser {
             "secrequestbodyaccess" => self.parse_boolean_directive(lexer, "SecRequestBodyAccess"),
             "secresponsebodyaccess" => self.parse_boolean_directive(lexer, "SecResponseBodyAccess"),
             "include" => self.parse_include(lexer),
+            // Recognized engine-config/metadata directives that have no effect on
+            // rule evaluation — skip quietly rather than warning.
+            "seccomponentsignature" | "seccollectiontimeout" => {
+                self.skip_to_end_of_line(lexer);
+                Ok(Directive::Unknown(name.to_string()))
+            }
             _ => {
                 // Skip unknown directives with a warning
                 tracing::warn!(
@@ -166,7 +172,8 @@ impl Parser {
 
         // Parse operator
         let operator_str = self.expect_quoted_argument(lexer, "SecRule operator")?;
-        let operator = operator::parse_operator(&operator_str)?;
+        let mut operator = operator::parse_operator(&operator_str)?;
+        self.resolve_operator_file_path(&mut operator);
 
         // Parse actions (optional)
         let actions = if self.peek_quoted(lexer) {
@@ -185,6 +192,27 @@ impl Parser {
             actions,
             location: self.location.clone(),
         }))
+    }
+
+    /// Resolve a relative data-file argument (`@pmFromFile`/`@ipMatchFromFile`)
+    /// against the directory of the file currently being parsed, matching how
+    /// ModSecurity/CRS reference their `.data` files.
+    fn resolve_operator_file_path(&self, operator: &mut OperatorSpec) {
+        if !matches!(
+            operator.name,
+            OperatorName::PmFromFile | OperatorName::IpMatchFromFile
+        ) {
+            return;
+        }
+        if std::path::Path::new(&operator.argument).is_absolute() {
+            return;
+        }
+        if let Some(parent) = self.location.file.as_ref().and_then(|f| f.parent()) {
+            let joined = parent.join(&operator.argument);
+            if joined.exists() {
+                operator.argument = joined.to_string_lossy().into_owned();
+            }
+        }
     }
 
     /// Parse a SecAction directive.
@@ -264,15 +292,15 @@ impl Parser {
     fn parse_include(&mut self, lexer: &mut Lexer) -> Result<Directive> {
         let path = self.expect_argument(lexer, "Include path")?;
 
-        // Resolve relative paths
-        let resolved_path = if let Some(ref base) = self.location.file {
-            if let Some(parent) = base.parent() {
-                let full_path = parent.join(&path);
-                if full_path.exists() {
-                    full_path.to_string_lossy().to_string()
-                } else {
-                    path
-                }
+        // Resolve relative paths (including globs) against the including file's
+        // directory. A glob pattern never `exists()` as a literal path, so it is
+        // detected explicitly rather than falling back to a CWD-relative path.
+        let resolved_path = if let Some(parent) = self.location.file.as_ref().and_then(|f| f.parent())
+        {
+            let candidate = parent.join(&path);
+            let is_glob = path.contains(['*', '?', '[']);
+            if candidate.exists() || is_glob {
+                candidate.to_string_lossy().to_string()
             } else {
                 path
             }
@@ -404,5 +432,69 @@ mod tests {
             }
             _ => panic!("expected SecRuleEngine"),
         }
+    }
+
+    #[test]
+    fn test_relative_include_glob_resolves() {
+        // `Include rules/*.conf` must resolve relative to the including file,
+        // not the process CWD.
+        let dir = tempfile::tempdir().unwrap();
+        let sub = dir.path().join("rules");
+        std::fs::create_dir(&sub).unwrap();
+        std::fs::write(
+            sub.join("a.conf"),
+            r#"SecRule REQUEST_URI "@contains /a" "id:101,phase:1,deny""#,
+        )
+        .unwrap();
+        std::fs::write(
+            sub.join("b.conf"),
+            r#"SecRule REQUEST_URI "@contains /b" "id:102,phase:1,deny""#,
+        )
+        .unwrap();
+        let entry = dir.path().join("entry.conf");
+        std::fs::write(&entry, "Include rules/*.conf\n").unwrap();
+
+        let mut parser = Parser::new();
+        parser.parse_file(&entry).unwrap();
+        let secrules = parser
+            .directives
+            .iter()
+            .filter(|d| matches!(d, Directive::SecRule(_)))
+            .count();
+        assert_eq!(secrules, 2, "both included rule files should be parsed");
+    }
+
+    #[test]
+    fn test_pmfromfile_relative_path_resolves() {
+        // `@pmFromFile patterns.data` must resolve next to the rule file.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("patterns.data"), "evilword\n").unwrap();
+        let conf = dir.path().join("rules.conf");
+        std::fs::write(
+            &conf,
+            r#"SecRule ARGS "@pmFromFile patterns.data" "id:201,phase:1,deny""#,
+        )
+        .unwrap();
+
+        let mut parser = Parser::new();
+        parser.parse_file(&conf).unwrap();
+        match &parser.directives[0] {
+            Directive::SecRule(rule) => {
+                let arg = &rule.operator.argument;
+                let p = std::path::Path::new(arg);
+                assert!(p.is_absolute(), "data path should be resolved to absolute: {arg}");
+                assert!(p.exists(), "resolved data path should exist: {arg}");
+            }
+            _ => panic!("expected SecRule"),
+        }
+    }
+
+    #[test]
+    fn test_normalise_path_transformation_alias() {
+        // CRS uses the British spelling t:normalisePath; it must compile.
+        let rs = crate::engine::CompiledRuleset::from_string(
+            r#"SecRule REQUEST_URI "@contains /etc" "id:301,phase:1,t:normalisePath,deny""#,
+        );
+        assert!(rs.is_ok(), "normalisePath must be recognized: {:?}", rs.err());
     }
 }

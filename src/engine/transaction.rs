@@ -7,7 +7,7 @@ use super::intervention::Intervention;
 use super::phase::Phase;
 use super::ruleset::{CompiledRule, CompiledRuleset, RuleEngineMode};
 use super::scoring::AnomalyScore;
-use crate::actions::{execute_actions, DisruptiveOutcome, FlowOutcome, SetVarOp};
+use crate::actions::{execute_actions, DisruptiveOutcome, FlowOutcome, SetVarOp, SetVarOperation};
 use crate::error::Result;
 use crate::operators::{compile_operator, Operator};
 use crate::parser::OperatorSpec;
@@ -403,12 +403,38 @@ impl Transaction {
 
     /// Apply a setvar operation.
     fn apply_setvar(&mut self, op: &SetVarOp) {
-        crate::actions::apply_setvar(&mut self.tx, op);
+        // A macro-bearing value (e.g. `+%{tx.critical_anomaly_score}`) is
+        // resolved here, where TX state is available, then re-interpreted as a
+        // concrete set/increment/decrement.
+        if let SetVarOperation::Macro(raw) = &op.operation {
+            let expanded = self.expand_operator_macros(raw);
+            let resolved = SetVarOp {
+                collection: op.collection.clone(),
+                name: op.name.clone(),
+                operation: interpret_setvar_rhs(&expanded),
+            };
+            crate::actions::apply_setvar(&mut self.tx, &resolved);
+        } else {
+            crate::actions::apply_setvar(&mut self.tx, op);
+        }
 
         // Sync anomaly score from TX if relevant
         if op.name == "anomaly_score" {
             self.anomaly_score.sync_from_tx(&self.tx);
         }
+    }
+}
+
+/// Interpret an already-expanded setvar right-hand side into a concrete
+/// operation, honouring a leading `+`/`-` for increment/decrement. An empty or
+/// non-numeric increment/decrement (e.g. an unresolved macro) becomes a no-op.
+fn interpret_setvar_rhs(value: &str) -> SetVarOperation {
+    if let Some(rest) = value.strip_prefix('+') {
+        SetVarOperation::Increment(rest.trim().parse().unwrap_or(0))
+    } else if let Some(rest) = value.strip_prefix('-') {
+        SetVarOperation::Decrement(rest.trim().parse().unwrap_or(0))
+    } else {
+        SetVarOperation::Set(value.to_string())
     }
 }
 
@@ -553,6 +579,35 @@ mod tests {
         tx.add_request_header("User-Agent", "sqlmap/1.0").unwrap();
         tx.process_request_headers().unwrap();
         assert!(tx.has_intervention(), "User-Agent selector should match");
+    }
+
+    #[test]
+    fn test_setvar_value_macro_accumulates() {
+        // CRS-style score accumulation: setvar:'tx.anomaly_score=+%{tx.critical_anomaly_score}'
+        // must add the resolved delta (5), and twice must yield 10.
+        let ruleset = make_ruleset(r#"
+            SecAction "id:1,phase:1,pass,nolog,setvar:tx.critical_anomaly_score=5"
+            SecRule REQUEST_URI "@contains /" "id:2,phase:1,pass,nolog,setvar:'tx.anomaly_score=+%{tx.critical_anomaly_score}'"
+            SecRule REQUEST_URI "@contains /" "id:3,phase:1,pass,nolog,setvar:'tx.anomaly_score=+%{tx.critical_anomaly_score}'"
+        "#);
+        let mut tx = Transaction::new(ruleset, 403);
+        tx.process_uri("/", "GET", "HTTP/1.1").unwrap();
+        tx.process_request_headers().unwrap();
+        let score = tx.tx().get("anomaly_score").and_then(|v| v.first().map(|s| s.to_string()));
+        assert_eq!(score, Some("10".to_string()), "two +5 macro increments should total 10");
+    }
+
+    #[test]
+    fn test_setvar_value_macro_unresolved_is_noop() {
+        // An unresolved macro delta must not silently increment by 1.
+        let ruleset = make_ruleset(r#"
+            SecRule REQUEST_URI "@contains /" "id:1,phase:1,pass,nolog,setvar:'tx.anomaly_score=+%{tx.missing}'"
+        "#);
+        let mut tx = Transaction::new(ruleset, 403);
+        tx.process_uri("/", "GET", "HTTP/1.1").unwrap();
+        tx.process_request_headers().unwrap();
+        let score = tx.tx().get("anomaly_score").and_then(|v| v.first().map(|s| s.to_string()));
+        assert_eq!(score, Some("0".to_string()), "unresolved macro increment should be a no-op");
     }
 
     #[test]

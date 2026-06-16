@@ -18,6 +18,10 @@ pub fn apply_setvar<C: MutableCollection>(collection: &mut C, op: &SetVarOp) {
         SetVarOperation::Delete => {
             collection.delete(&op.name);
         }
+        SetVarOperation::Macro(_) => {
+            // Macro values are expanded and resolved to a concrete operation by
+            // the transaction before reaching this function; nothing to do here.
+        }
     }
 }
 

@@ -131,6 +131,8 @@ pub enum SetVarValue {
     Decrement(i64),
     /// Delete variable.
     Delete,
+    /// Raw right-hand side containing `%{...}` macros, resolved at apply time.
+    Macro(String),
 }
 
 /// Logging actions.
@@ -523,7 +525,11 @@ fn parse_setvar(input: &str) -> Result<SetVarSpec> {
     let (collection, key) = parse_var_name(var)?;
 
     let value = if let Some(val) = value_str {
-        if val.starts_with('+') {
+        if val.contains("%{") {
+            // Contains a macro (e.g. +%{tx.critical_anomaly_score}); defer the
+            // sign/value interpretation until the macro is expanded at apply time.
+            SetVarValue::Macro(val.to_string())
+        } else if val.starts_with('+') {
             // Increment
             let amount: i64 = val[1..].parse().unwrap_or(1);
             SetVarValue::Increment(amount)

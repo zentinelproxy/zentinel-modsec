@@ -20,6 +20,8 @@ pub struct CompiledRule {
     pub variables: Vec<VariableSpec>,
     /// Compiled operator.
     pub operator: Arc<dyn Operator>,
+    /// Original operator specification (retained for runtime macro expansion).
+    pub operator_spec: OperatorSpec,
     /// Whether operator is negated.
     pub operator_negated: bool,
     /// Transformation pipeline.
@@ -161,6 +163,7 @@ impl CompiledRuleset {
                     let is_chain = has_chain(&rule.actions);
                     let transformations = extract_transformations(&rule.actions)?;
 
+                    let operator_spec = rule.operator.clone();
                     let operator = compile_operator(&rule.operator)?;
 
                     let compiled = CompiledRule {
@@ -168,7 +171,8 @@ impl CompiledRuleset {
                         phase,
                         variables: rule.variables,
                         operator,
-                        operator_negated: rule.operator.negated,
+                        operator_negated: operator_spec.negated,
+                        operator_spec,
                         transformations,
                         actions: rule.actions,
                         is_chain,
@@ -202,11 +206,12 @@ impl CompiledRuleset {
                     let transformations = extract_transformations(&sec_action.actions)?;
 
                     // Create a rule with unconditional match operator
-                    let operator = compile_operator(&OperatorSpec {
+                    let operator_spec = OperatorSpec {
                         negated: false,
                         name: OperatorName::UnconditionalMatch,
                         argument: String::new(),
-                    })?;
+                    };
+                    let operator = compile_operator(&operator_spec)?;
 
                     let compiled = CompiledRule {
                         id,
@@ -214,6 +219,7 @@ impl CompiledRuleset {
                         variables: vec![],
                         operator,
                         operator_negated: false,
+                        operator_spec,
                         transformations,
                         actions: sec_action.actions,
                         is_chain: false,

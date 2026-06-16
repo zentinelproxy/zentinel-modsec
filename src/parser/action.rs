@@ -131,6 +131,8 @@ pub enum SetVarValue {
     Decrement(i64),
     /// Delete variable.
     Delete,
+    /// Raw right-hand side containing `%{...}` macros, resolved at apply time.
+    Macro(String),
 }
 
 /// Logging actions.
@@ -491,6 +493,16 @@ fn parse_single_action(input: &str) -> Result<Action> {
 /// Parse a setvar specification.
 fn parse_setvar(input: &str) -> Result<SetVarSpec> {
     let input = input.trim();
+    // CRS writes setvar specs in quoted form, e.g. setvar:'tx.score=+5'.
+    // Strip a matching pair of surrounding quotes so the value parses correctly.
+    let input = if input.len() >= 2
+        && ((input.starts_with('\'') && input.ends_with('\''))
+            || (input.starts_with('"') && input.ends_with('"')))
+    {
+        &input[1..input.len() - 1]
+    } else {
+        input
+    };
 
     // Check for delete (!var)
     if input.starts_with('!') {
@@ -513,7 +525,11 @@ fn parse_setvar(input: &str) -> Result<SetVarSpec> {
     let (collection, key) = parse_var_name(var)?;
 
     let value = if let Some(val) = value_str {
-        if val.starts_with('+') {
+        if val.contains("%{") {
+            // Contains a macro (e.g. +%{tx.critical_anomaly_score}); defer the
+            // sign/value interpretation until the macro is expanded at apply time.
+            SetVarValue::Macro(val.to_string())
+        } else if val.starts_with('+') {
             // Increment
             let amount: i64 = val[1..].parse().unwrap_or(1);
             SetVarValue::Increment(amount)
@@ -593,6 +609,33 @@ mod tests {
                 assert_eq!(spec.collection, "tx");
                 assert_eq!(spec.key, "score");
                 assert!(matches!(spec.value, SetVarValue::Increment(5)));
+            }
+            _ => panic!("expected SetVar"),
+        }
+    }
+
+    #[test]
+    fn test_parse_setvar_quoted_increment() {
+        // CRS form: setvar:'tx.anomaly_score=+5' must increment by 5, not 1.
+        let actions = parse_actions("setvar:'tx.anomaly_score=+5'").unwrap();
+        match &actions[0] {
+            Action::Data(DataAction::SetVar(spec)) => {
+                assert_eq!(spec.key, "anomaly_score");
+                assert!(matches!(spec.value, SetVarValue::Increment(5)),
+                    "expected Increment(5), got {:?}", spec.value);
+            }
+            _ => panic!("expected SetVar"),
+        }
+    }
+
+    #[test]
+    fn test_parse_setvar_quoted_set() {
+        let actions = parse_actions("setvar:'tx.anomaly_score=7'").unwrap();
+        match &actions[0] {
+            Action::Data(DataAction::SetVar(spec)) => {
+                assert_eq!(spec.key, "anomaly_score");
+                assert!(matches!(spec.value, SetVarValue::Int(7)),
+                    "expected Int(7), got {:?}", spec.value);
             }
             _ => panic!("expected SetVar"),
         }

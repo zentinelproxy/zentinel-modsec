@@ -11,10 +11,10 @@ pub struct IpMatchOperator {
 }
 
 impl IpMatchOperator {
-    /// Create from space-separated IP/CIDR list.
+    /// Create from a comma- and/or whitespace-separated IP/CIDR list.
     pub fn new(ips: &str) -> Result<Self> {
         let networks = ips
-            .split_whitespace()
+            .split(|c: char| c == ',' || c.is_whitespace())
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
             .map(|s| {
@@ -130,5 +130,21 @@ mod tests {
         assert!(op.execute("10.1.2.3").matched);
         assert!(op.execute("192.168.1.1").matched);
         assert!(!op.execute("172.16.0.1").matched);
+    }
+
+    #[test]
+    fn test_ip_match_comma_separated() {
+        // CRS REQUEST-905 uses the comma-separated form, e.g. "127.0.0.1,::1".
+        let op = IpMatchOperator::new("127.0.0.1,::1").unwrap();
+        assert!(op.execute("127.0.0.1").matched);
+        assert!(op.execute("::1").matched);
+        assert!(!op.execute("10.0.0.1").matched);
+    }
+
+    #[test]
+    fn test_ip_match_comma_and_space_mixed() {
+        let op = IpMatchOperator::new("10.0.0.0/8, 192.168.0.0/16").unwrap();
+        assert!(op.execute("10.1.2.3").matched);
+        assert!(op.execute("192.168.1.1").matched);
     }
 }

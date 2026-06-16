@@ -42,25 +42,18 @@ zentinel-modsec = "0.1"
 ### Basic Usage
 
 ```rust
-use zentinel_modsec::{ModSecurity, Rules, Transaction};
+use zentinel_modsec::ModSecurity;
 
 fn main() -> zentinel_modsec::Result<()> {
-    // Create the ModSecurity engine
-    let modsec = ModSecurity::new();
-
-    // Load rules
-    let mut rules = Rules::new();
-    rules.add_plain("SecRuleEngine On")?;
-    rules.add_plain(r#"
+    // Compile rules once; reuse the engine for all requests.
+    let modsec = ModSecurity::from_string(r#"
+        SecRuleEngine On
         SecRule REQUEST_URI "@contains /admin" \
             "id:1,phase:1,deny,status:403,msg:'Admin access blocked'"
     "#)?;
 
-    // Compile rules (do this once, reuse for all requests)
-    let ruleset = rules.compile()?;
-
     // Process a request
-    let mut tx = modsec.transaction(&ruleset);
+    let mut tx = modsec.new_transaction();
     tx.process_uri("/admin/dashboard", "GET", "HTTP/1.1")?;
     tx.add_request_header("Host", "example.com")?;
     tx.add_request_header("User-Agent", "Mozilla/5.0")?;
@@ -68,9 +61,9 @@ fn main() -> zentinel_modsec::Result<()> {
 
     // Check for intervention (block/redirect/etc)
     if let Some(intervention) = tx.intervention() {
-        println!("Blocked: status={}, rule={:?}",
+        println!("Blocked: status={}, rules={:?}",
             intervention.status,
-            intervention.rule_id);
+            intervention.rule_ids);
     }
 
     Ok(())
@@ -80,22 +73,14 @@ fn main() -> zentinel_modsec::Result<()> {
 ### Loading OWASP CRS Rules
 
 ```rust
-use zentinel_modsec::{ModSecurity, Rules};
+use zentinel_modsec::ModSecurity;
 
 fn main() -> zentinel_modsec::Result<()> {
-    let modsec = ModSecurity::new();
+    // Point at an entry file that `Include`s crs-setup.conf and the rule files
+    // (CRS ships such a layout), or a single combined ruleset file.
+    let modsec = ModSecurity::from_file("/etc/modsecurity/main.conf")?;
 
-    let mut rules = Rules::new();
-
-    // Load CRS setup
-    rules.add_file("/etc/modsecurity/crs/crs-setup.conf")?;
-
-    // Load all CRS rules (glob patterns supported)
-    rules.add_file("/etc/modsecurity/crs/rules/*.conf")?;
-
-    let ruleset = rules.compile()?;
-
-    println!("Loaded {} rules", ruleset.rule_count());
+    println!("Loaded {} rules", modsec.rule_count());
 
     Ok(())
 }
@@ -104,20 +89,16 @@ fn main() -> zentinel_modsec::Result<()> {
 ### SQL Injection Detection
 
 ```rust
-use zentinel_modsec::{ModSecurity, Rules};
+use zentinel_modsec::ModSecurity;
 
 fn main() -> zentinel_modsec::Result<()> {
-    let modsec = ModSecurity::new();
-
-    let mut rules = Rules::new();
-    rules.add_plain(r#"
+    let modsec = ModSecurity::from_string(r#"
         SecRuleEngine On
         SecRule ARGS "@detectSQLi" \
             "id:942100,phase:2,deny,status:403,msg:'SQL Injection detected'"
     "#)?;
 
-    let ruleset = rules.compile()?;
-    let mut tx = modsec.transaction(&ruleset);
+    let mut tx = modsec.new_transaction();
 
     // Simulate a request with SQLi payload
     tx.process_uri("/search?q=' OR 1=1--", "GET", "HTTP/1.1")?;
@@ -133,20 +114,16 @@ fn main() -> zentinel_modsec::Result<()> {
 ### XSS Detection
 
 ```rust
-use zentinel_modsec::{ModSecurity, Rules};
+use zentinel_modsec::ModSecurity;
 
 fn main() -> zentinel_modsec::Result<()> {
-    let modsec = ModSecurity::new();
-
-    let mut rules = Rules::new();
-    rules.add_plain(r#"
+    let modsec = ModSecurity::from_string(r#"
         SecRuleEngine On
         SecRule ARGS "@detectXSS" \
             "id:941100,phase:2,deny,status:403,msg:'XSS detected'"
     "#)?;
 
-    let ruleset = rules.compile()?;
-    let mut tx = modsec.transaction(&ruleset);
+    let mut tx = modsec.new_transaction();
 
     tx.process_uri("/comment?text=<script>alert(1)</script>", "GET", "HTTP/1.1")?;
     tx.process_request_headers()?;
@@ -161,21 +138,17 @@ fn main() -> zentinel_modsec::Result<()> {
 ### Request Body Inspection
 
 ```rust
-use zentinel_modsec::{ModSecurity, Rules};
+use zentinel_modsec::ModSecurity;
 
 fn main() -> zentinel_modsec::Result<()> {
-    let modsec = ModSecurity::new();
-
-    let mut rules = Rules::new();
-    rules.add_plain(r#"
+    let modsec = ModSecurity::from_string(r#"
         SecRuleEngine On
         SecRequestBodyAccess On
         SecRule REQUEST_BODY "@detectSQLi" \
             "id:942110,phase:2,deny,status:403,msg:'SQLi in body'"
     "#)?;
 
-    let ruleset = rules.compile()?;
-    let mut tx = modsec.transaction(&ruleset);
+    let mut tx = modsec.new_transaction();
 
     tx.process_uri("/api/login", "POST", "HTTP/1.1")?;
     tx.add_request_header("Content-Type", "application/x-www-form-urlencoded")?;
@@ -194,19 +167,15 @@ fn main() -> zentinel_modsec::Result<()> {
 ### Detection-Only Mode
 
 ```rust
-use zentinel_modsec::{ModSecurity, Rules};
+use zentinel_modsec::ModSecurity;
 
 fn main() -> zentinel_modsec::Result<()> {
-    let modsec = ModSecurity::new();
-
-    let mut rules = Rules::new();
-    rules.add_plain(r#"
+    let modsec = ModSecurity::from_string(r#"
         SecRuleEngine DetectionOnly
         SecRule REQUEST_URI "@contains /admin" "id:1,phase:1,deny"
     "#)?;
 
-    let ruleset = rules.compile()?;
-    let mut tx = modsec.transaction(&ruleset);
+    let mut tx = modsec.new_transaction();
 
     tx.process_uri("/admin", "GET", "HTTP/1.1")?;
     tx.process_request_headers()?;
@@ -224,13 +193,10 @@ fn main() -> zentinel_modsec::Result<()> {
 ### Anomaly Scoring
 
 ```rust
-use zentinel_modsec::{ModSecurity, Rules};
+use zentinel_modsec::ModSecurity;
 
 fn main() -> zentinel_modsec::Result<()> {
-    let modsec = ModSecurity::new();
-
-    let mut rules = Rules::new();
-    rules.add_plain(r#"
+    let modsec = ModSecurity::from_string(r#"
         SecRuleEngine On
 
         # Increment score for suspicious patterns
@@ -244,8 +210,7 @@ fn main() -> zentinel_modsec::Result<()> {
             "id:100,phase:1,deny,status:403,msg:'Anomaly score exceeded'"
     "#)?;
 
-    let ruleset = rules.compile()?;
-    let mut tx = modsec.transaction(&ruleset);
+    let mut tx = modsec.new_transaction();
 
     tx.process_uri("/admin", "GET", "HTTP/1.1")?;
     tx.add_request_header("User-Agent", "sqlmap/1.0")?;
@@ -272,16 +237,15 @@ use axum::{
     routing::get,
     Router,
 };
-use zentinel_modsec::{ModSecurity, CompiledRuleset};
+use zentinel_modsec::ModSecurity;
 use std::sync::Arc;
 
 async fn waf_middleware(
-    State(ruleset): State<Arc<CompiledRuleset>>,
+    State(modsec): State<Arc<ModSecurity>>,
     request: Request<Body>,
     next: Next,
 ) -> Result<Response, StatusCode> {
-    let modsec = ModSecurity::new();
-    let mut tx = modsec.transaction(&ruleset);
+    let mut tx = modsec.new_transaction();
 
     // Process request
     tx.process_uri(
@@ -309,14 +273,12 @@ async fn waf_middleware(
 
 #[tokio::main]
 async fn main() {
-    let mut rules = zentinel_modsec::Rules::new();
-    rules.add_file("/etc/modsecurity/crs/rules/*.conf").unwrap();
-    let ruleset = Arc::new(rules.compile().unwrap());
+    let modsec = Arc::new(ModSecurity::from_file("/etc/modsecurity/main.conf").unwrap());
 
     let app = Router::new()
         .route("/", get(|| async { "Hello, World!" }))
-        .layer(middleware::from_fn_with_state(ruleset.clone(), waf_middleware))
-        .with_state(ruleset);
+        .layer(middleware::from_fn_with_state(modsec.clone(), waf_middleware))
+        .with_state(modsec);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
     axum::serve(listener, app).await.unwrap();
@@ -327,15 +289,14 @@ async fn main() {
 
 ```rust
 use actix_web::{web, App, HttpServer, HttpRequest, HttpResponse, middleware};
-use zentinel_modsec::{ModSecurity, CompiledRuleset};
+use zentinel_modsec::ModSecurity;
 use std::sync::Arc;
 
 async fn waf_check(
     req: HttpRequest,
-    ruleset: web::Data<Arc<CompiledRuleset>>,
+    modsec: web::Data<Arc<ModSecurity>>,
 ) -> Option<HttpResponse> {
-    let modsec = ModSecurity::new();
-    let mut tx = modsec.transaction(&ruleset);
+    let mut tx = modsec.new_transaction();
 
     tx.process_uri(req.uri().path_and_query().map(|pq| pq.as_str()).unwrap_or("/"),
                    req.method().as_str(),
@@ -351,7 +312,7 @@ async fn waf_check(
 
     tx.intervention().map(|i| {
         HttpResponse::build(actix_web::http::StatusCode::from_u16(i.status).unwrap())
-            .body(format!("Blocked by rule: {:?}", i.rule_id))
+            .body(format!("Blocked by rule: {:?}", i.rule_ids))
     })
 }
 ```
@@ -455,9 +416,16 @@ async fn waf_check(
 git clone https://github.com/coreruleset/coreruleset /etc/modsecurity/crs
 cp /etc/modsecurity/crs/crs-setup.conf.example /etc/modsecurity/crs/crs-setup.conf
 
-# Use in your application
-rules.add_file("/etc/modsecurity/crs/crs-setup.conf")?;
-rules.add_file("/etc/modsecurity/crs/rules/*.conf")?;
+# Create an entry file that pulls in the setup and rule files
+cat > /etc/modsecurity/main.conf <<'EOF'
+Include /etc/modsecurity/crs/crs-setup.conf
+Include /etc/modsecurity/crs/rules/*.conf
+EOF
+```
+
+```rust
+// Then load the entry file from your application:
+let modsec = zentinel_modsec::ModSecurity::from_file("/etc/modsecurity/main.conf")?;
 ```
 
 ## Comparison

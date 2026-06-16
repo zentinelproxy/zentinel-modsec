@@ -7,9 +7,11 @@ use super::intervention::Intervention;
 use super::phase::Phase;
 use super::ruleset::{CompiledRule, CompiledRuleset, RuleEngineMode};
 use super::scoring::AnomalyScore;
-use crate::actions::{execute_actions, DisruptiveOutcome, FlowOutcome, SetVarOp};
+use crate::actions::{execute_actions, DisruptiveOutcome, FlowOutcome, SetVarOp, SetVarOperation};
 use crate::error::Result;
-use crate::variables::{RequestData, ResponseData, TxCollection, VariableResolver};
+use crate::operators::{compile_operator, Operator};
+use crate::parser::OperatorSpec;
+use crate::variables::{Collection, RequestData, ResponseData, TxCollection, VariableResolver};
 
 /// A ModSecurity transaction for processing a single request.
 pub struct Transaction {
@@ -331,14 +333,38 @@ impl Transaction {
         }
 
         if all_values.is_empty() {
-            // No values to match
+            // A rule with no variable specs at all (i.e. SecAction) runs its
+            // operator unconditionally — this is how CRS sets up TX thresholds.
+            if rule.variables.is_empty() {
+                let result = rule.operator.execute("");
+                let matched = if rule.operator_negated { !result.matched } else { result.matched };
+                return Ok((matched, result.captures));
+            }
+            // Variables were specified but resolved to nothing (e.g. absent header).
             return Ok((rule.operator_negated, Vec::new()));
         }
+
+        // If the operator argument references runtime macros (e.g.
+        // `@ge %{tx.inbound_anomaly_score_threshold}`), expand them against the
+        // current TX state and recompile the operator so the comparison runs
+        // against the resolved value. Otherwise use the precompiled operator.
+        let dynamic_operator;
+        let operator: &dyn Operator = if rule.operator_spec.argument.contains("%{") {
+            let expanded = self.expand_operator_macros(&rule.operator_spec.argument);
+            dynamic_operator = compile_operator(&OperatorSpec {
+                negated: rule.operator_spec.negated,
+                name: rule.operator_spec.name,
+                argument: expanded,
+            })?;
+            dynamic_operator.as_ref()
+        } else {
+            rule.operator.as_ref()
+        };
 
         // Apply transformations and match
         for (_name, value) in all_values {
             let transformed = rule.transformations.apply(&value);
-            let result = rule.operator.execute(&transformed);
+            let result = operator.execute(&transformed);
 
             let final_match = if rule.operator_negated { !result.matched } else { result.matched };
 
@@ -350,14 +376,65 @@ impl Transaction {
         Ok((false, Vec::new()))
     }
 
+    /// Expand `%{...}` macros in an operator argument against current TX state.
+    ///
+    /// Only the `TX`/`tx` collection is resolved (the source of operator-argument
+    /// macros in CRS, e.g. thresholds and `tx.allowed_methods`); an unresolved
+    /// macro expands to an empty string, matching ModSecurity behaviour.
+    fn expand_operator_macros(&self, arg: &str) -> String {
+        let re = regex::Regex::new(r"%\{([^}]+)\}").expect("static macro regex is valid");
+        re.replace_all(arg, |caps: &regex::Captures| {
+            let inner = &caps[1];
+            let (collection, name) = match inner.split_once('.') {
+                Some((c, n)) => (c.to_ascii_lowercase(), n),
+                None => ("tx".to_string(), inner),
+            };
+            if collection == "tx" {
+                self.tx
+                    .get(name)
+                    .and_then(|v| v.first().map(|s| s.to_string()))
+                    .unwrap_or_default()
+            } else {
+                String::new()
+            }
+        })
+        .into_owned()
+    }
+
     /// Apply a setvar operation.
     fn apply_setvar(&mut self, op: &SetVarOp) {
-        crate::actions::apply_setvar(&mut self.tx, op);
+        // A macro-bearing value (e.g. `+%{tx.critical_anomaly_score}`) is
+        // resolved here, where TX state is available, then re-interpreted as a
+        // concrete set/increment/decrement.
+        if let SetVarOperation::Macro(raw) = &op.operation {
+            let expanded = self.expand_operator_macros(raw);
+            let resolved = SetVarOp {
+                collection: op.collection.clone(),
+                name: op.name.clone(),
+                operation: interpret_setvar_rhs(&expanded),
+            };
+            crate::actions::apply_setvar(&mut self.tx, &resolved);
+        } else {
+            crate::actions::apply_setvar(&mut self.tx, op);
+        }
 
         // Sync anomaly score from TX if relevant
         if op.name == "anomaly_score" {
             self.anomaly_score.sync_from_tx(&self.tx);
         }
+    }
+}
+
+/// Interpret an already-expanded setvar right-hand side into a concrete
+/// operation, honouring a leading `+`/`-` for increment/decrement. An empty or
+/// non-numeric increment/decrement (e.g. an unresolved macro) becomes a no-op.
+fn interpret_setvar_rhs(value: &str) -> SetVarOperation {
+    if let Some(rest) = value.strip_prefix('+') {
+        SetVarOperation::Increment(rest.trim().parse().unwrap_or(0))
+    } else if let Some(rest) = value.strip_prefix('-') {
+        SetVarOperation::Decrement(rest.trim().parse().unwrap_or(0))
+    } else {
+        SetVarOperation::Set(value.to_string())
     }
 }
 
@@ -419,6 +496,118 @@ mod tests {
         assert!(!tx.has_intervention());
         let score = tx.tx().get("score").and_then(|v| v.first().map(|s| s.to_string()));
         assert_eq!(score, Some("5".to_string()));
+    }
+
+    #[test]
+    fn test_operator_arg_macro_ge_threshold() {
+        // @ge with a %{tx.*} argument must compare against the resolved value.
+        let ruleset = make_ruleset(r#"
+            SecRule REQUEST_URI "@contains /" "id:1,phase:1,pass,nolog,setvar:tx.threshold=5"
+            SecRule REQUEST_URI "@contains /" "id:2,phase:1,pass,nolog,setvar:tx.score=10"
+            SecRule TX:score "@ge %{tx.threshold}" "id:3,phase:1,deny"
+        "#);
+        let mut tx = Transaction::new(ruleset, 403);
+        tx.process_uri("/", "GET", "HTTP/1.1").unwrap();
+        tx.process_request_headers().unwrap();
+        assert!(tx.has_intervention(), "score 10 >= threshold 5 should block");
+    }
+
+    #[test]
+    fn test_operator_arg_macro_ge_below_threshold() {
+        let ruleset = make_ruleset(r#"
+            SecRule REQUEST_URI "@contains /" "id:1,phase:1,pass,nolog,setvar:tx.threshold=5"
+            SecRule REQUEST_URI "@contains /" "id:2,phase:1,pass,nolog,setvar:tx.score=3"
+            SecRule TX:score "@ge %{tx.threshold}" "id:3,phase:1,deny"
+        "#);
+        let mut tx = Transaction::new(ruleset, 403);
+        tx.process_uri("/", "GET", "HTTP/1.1").unwrap();
+        tx.process_request_headers().unwrap();
+        assert!(!tx.has_intervention(), "score 3 < threshold 5 should not block");
+    }
+
+    #[test]
+    fn test_negated_within_macro_does_not_block_allowed() {
+        // Regression for the 911100 case: a negated @within whose argument is a
+        // resolvable macro must not block when the value IS in the list.
+        let ruleset = make_ruleset(r#"
+            SecRule REQUEST_URI "@contains /" "id:1,phase:1,pass,nolog,setvar:tx.allowed=GET"
+            SecRule REQUEST_METHOD "!@within %{tx.allowed}" "id:2,phase:1,deny"
+        "#);
+        let mut tx = Transaction::new(ruleset, 403);
+        tx.process_uri("/", "GET", "HTTP/1.1").unwrap();
+        tx.process_request_headers().unwrap();
+        assert!(!tx.has_intervention(), "GET is allowed, must not block");
+    }
+
+    #[test]
+    fn test_negated_within_macro_blocks_disallowed() {
+        let ruleset = make_ruleset(r#"
+            SecRule REQUEST_URI "@contains /" "id:1,phase:1,pass,nolog,setvar:tx.allowed=GET"
+            SecRule REQUEST_METHOD "!@within %{tx.allowed}" "id:2,phase:1,deny"
+        "#);
+        let mut tx = Transaction::new(ruleset, 403);
+        tx.process_uri("/", "POST", "HTTP/1.1").unwrap();
+        tx.process_request_headers().unwrap();
+        assert!(tx.has_intervention(), "POST is not allowed, must block");
+    }
+
+    #[test]
+    fn test_secaction_sets_tx_and_macro_resolves() {
+        // CRS-style: SecAction (no variables) seeds a TX threshold that a later
+        // rule's operator macro resolves against.
+        let ruleset = make_ruleset(r#"
+            SecAction "id:1,phase:1,pass,nolog,setvar:tx.threshold=5"
+            SecRule REQUEST_URI "@contains /" "id:2,phase:1,pass,nolog,setvar:tx.score=10"
+            SecRule TX:score "@ge %{tx.threshold}" "id:3,phase:1,deny"
+        "#);
+        let mut tx = Transaction::new(ruleset, 403);
+        tx.process_uri("/", "GET", "HTTP/1.1").unwrap();
+        tx.process_request_headers().unwrap();
+        let threshold = tx.tx().get("threshold").and_then(|v| v.first().map(|s| s.to_string()));
+        assert_eq!(threshold, Some("5".to_string()), "SecAction setvar must apply");
+        assert!(tx.has_intervention(), "10 >= 5 should block");
+    }
+
+    #[test]
+    fn test_request_header_named_selector_matches() {
+        // REQUEST_HEADERS:User-Agent must match regardless of header-name case.
+        let ruleset = make_ruleset(r#"
+            SecRule REQUEST_HEADERS:User-Agent "@contains sqlmap" "id:1,phase:1,deny"
+        "#);
+        let mut tx = Transaction::new(ruleset, 403);
+        tx.process_uri("/", "GET", "HTTP/1.1").unwrap();
+        tx.add_request_header("User-Agent", "sqlmap/1.0").unwrap();
+        tx.process_request_headers().unwrap();
+        assert!(tx.has_intervention(), "User-Agent selector should match");
+    }
+
+    #[test]
+    fn test_setvar_value_macro_accumulates() {
+        // CRS-style score accumulation: setvar:'tx.anomaly_score=+%{tx.critical_anomaly_score}'
+        // must add the resolved delta (5), and twice must yield 10.
+        let ruleset = make_ruleset(r#"
+            SecAction "id:1,phase:1,pass,nolog,setvar:tx.critical_anomaly_score=5"
+            SecRule REQUEST_URI "@contains /" "id:2,phase:1,pass,nolog,setvar:'tx.anomaly_score=+%{tx.critical_anomaly_score}'"
+            SecRule REQUEST_URI "@contains /" "id:3,phase:1,pass,nolog,setvar:'tx.anomaly_score=+%{tx.critical_anomaly_score}'"
+        "#);
+        let mut tx = Transaction::new(ruleset, 403);
+        tx.process_uri("/", "GET", "HTTP/1.1").unwrap();
+        tx.process_request_headers().unwrap();
+        let score = tx.tx().get("anomaly_score").and_then(|v| v.first().map(|s| s.to_string()));
+        assert_eq!(score, Some("10".to_string()), "two +5 macro increments should total 10");
+    }
+
+    #[test]
+    fn test_setvar_value_macro_unresolved_is_noop() {
+        // An unresolved macro delta must not silently increment by 1.
+        let ruleset = make_ruleset(r#"
+            SecRule REQUEST_URI "@contains /" "id:1,phase:1,pass,nolog,setvar:'tx.anomaly_score=+%{tx.missing}'"
+        "#);
+        let mut tx = Transaction::new(ruleset, 403);
+        tx.process_uri("/", "GET", "HTTP/1.1").unwrap();
+        tx.process_request_headers().unwrap();
+        let score = tx.tx().get("anomaly_score").and_then(|v| v.first().map(|s| s.to_string()));
+        assert_eq!(score, Some("0".to_string()), "unresolved macro increment should be a no-op");
     }
 
     #[test]

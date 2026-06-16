@@ -91,6 +91,8 @@ pub enum SetVarOperation {
     Decrement(i64),
     /// Delete the variable.
     Delete,
+    /// Raw right-hand side with `%{...}` macros, resolved by the transaction.
+    Macro(String),
 }
 
 /// Metadata from a rule.
@@ -191,6 +193,7 @@ fn execute_data(action: &DataAction, result: &mut ActionResult, _matched_value: 
                 SetVarValue::Increment(v) => SetVarOperation::Increment(*v),
                 SetVarValue::Decrement(v) => SetVarOperation::Decrement(*v),
                 SetVarValue::Delete => SetVarOperation::Delete,
+                SetVarValue::Macro(s) => SetVarOperation::Macro(s.clone()),
             };
             result.setvar_ops.push(SetVarOp {
                 collection: spec.collection.clone(),

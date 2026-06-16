@@ -62,7 +62,7 @@ pub enum VariableName {
     MultipartDataBefore, MultipartFileLimitExceeded, MultipartHeaderFolding,
     MultipartInvalidHeaderFolding, MultipartInvalidPart, MultipartInvalidQuoting,
     MultipartLfLine, MultipartMissingSemicolon, MultipartStrictError,
-    MultipartUnmatchedBoundary,
+    MultipartUnmatchedBoundary, MultipartPartHeaders,
 
     // XML
     Xml,
@@ -157,6 +157,7 @@ static VARIABLE_MAP: phf::Map<&'static str, VariableName> = phf_map! {
     "REQBODY_PROCESSOR_ERROR" => VariableName::ReqBodyProcessorError,
     "REQBODY_PROCESSOR_ERROR_MSG" => VariableName::ReqBodyProcessorErrorMsg,
     "MULTIPART_STRICT_ERROR" => VariableName::MultipartStrictCheck,
+    "MULTIPART_PART_HEADERS" => VariableName::MultipartPartHeaders,
 };
 
 impl VariableName {
@@ -298,6 +299,14 @@ mod tests {
         assert_eq!(vars.len(), 1);
         assert_eq!(vars[0].name, VariableName::Args);
         assert!(matches!(&vars[0].selection, Some(Selection::Regex(r)) if r == "^user"));
+    }
+
+    #[test]
+    fn test_parse_multipart_part_headers() {
+        // Used by CRS REQUEST-922; must parse rather than erroring as unknown.
+        let vars = parse_variables("MULTIPART_PART_HEADERS").unwrap();
+        assert_eq!(vars.len(), 1);
+        assert_eq!(vars[0].name, VariableName::MultipartPartHeaders);
     }
 
     #[test]

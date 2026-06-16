@@ -100,7 +100,7 @@ impl<'a> VariableResolver<'a> {
                 self.resolve_collection(&self.request.args_post, "ARGS_POST", selection)
             }
             VariableName::RequestHeaders => {
-                self.resolve_collection(&self.request.headers, "REQUEST_HEADERS", selection)
+                self.resolve_collection_ci(&self.request.headers, "REQUEST_HEADERS", selection)
             }
             VariableName::RequestCookies => {
                 self.resolve_collection(&self.request.cookies, "REQUEST_COOKIES", selection)
@@ -123,7 +123,7 @@ impl<'a> VariableResolver<'a> {
                 )]
             }
             VariableName::ResponseHeaders => {
-                self.resolve_collection(&self.response.headers, "RESPONSE_HEADERS", selection)
+                self.resolve_collection_ci(&self.response.headers, "RESPONSE_HEADERS", selection)
             }
 
             // TX collection
@@ -175,11 +175,32 @@ impl<'a> VariableResolver<'a> {
         prefix: &str,
         selection: &Option<Selection>,
     ) -> Vec<(String, String)> {
+        self.resolve_collection_inner(collection, prefix, selection, false)
+    }
+
+    /// Resolve a collection where keys are matched case-insensitively (HTTP headers).
+    fn resolve_collection_ci(
+        &self,
+        collection: &super::collection::HashMapCollection,
+        prefix: &str,
+        selection: &Option<Selection>,
+    ) -> Vec<(String, String)> {
+        self.resolve_collection_inner(collection, prefix, selection, true)
+    }
+
+    fn resolve_collection_inner(
+        &self,
+        collection: &super::collection::HashMapCollection,
+        prefix: &str,
+        selection: &Option<Selection>,
+        lowercase_key: bool,
+    ) -> Vec<(String, String)> {
         use super::collection::Collection;
 
         match selection {
             Some(Selection::Key(key)) => {
-                if let Some(values) = collection.get(key) {
+                let lookup = if lowercase_key { key.to_ascii_lowercase() } else { key.clone() };
+                if let Some(values) = collection.get(&lookup) {
                     values
                         .into_iter()
                         .map(|v| (format!("{}:{}", prefix, key), v.to_string()))

@@ -491,6 +491,16 @@ fn parse_single_action(input: &str) -> Result<Action> {
 /// Parse a setvar specification.
 fn parse_setvar(input: &str) -> Result<SetVarSpec> {
     let input = input.trim();
+    // CRS writes setvar specs in quoted form, e.g. setvar:'tx.score=+5'.
+    // Strip a matching pair of surrounding quotes so the value parses correctly.
+    let input = if input.len() >= 2
+        && ((input.starts_with('\'') && input.ends_with('\''))
+            || (input.starts_with('"') && input.ends_with('"')))
+    {
+        &input[1..input.len() - 1]
+    } else {
+        input
+    };
 
     // Check for delete (!var)
     if input.starts_with('!') {
@@ -593,6 +603,33 @@ mod tests {
                 assert_eq!(spec.collection, "tx");
                 assert_eq!(spec.key, "score");
                 assert!(matches!(spec.value, SetVarValue::Increment(5)));
+            }
+            _ => panic!("expected SetVar"),
+        }
+    }
+
+    #[test]
+    fn test_parse_setvar_quoted_increment() {
+        // CRS form: setvar:'tx.anomaly_score=+5' must increment by 5, not 1.
+        let actions = parse_actions("setvar:'tx.anomaly_score=+5'").unwrap();
+        match &actions[0] {
+            Action::Data(DataAction::SetVar(spec)) => {
+                assert_eq!(spec.key, "anomaly_score");
+                assert!(matches!(spec.value, SetVarValue::Increment(5)),
+                    "expected Increment(5), got {:?}", spec.value);
+            }
+            _ => panic!("expected SetVar"),
+        }
+    }
+
+    #[test]
+    fn test_parse_setvar_quoted_set() {
+        let actions = parse_actions("setvar:'tx.anomaly_score=7'").unwrap();
+        match &actions[0] {
+            Action::Data(DataAction::SetVar(spec)) => {
+                assert_eq!(spec.key, "anomaly_score");
+                assert!(matches!(spec.value, SetVarValue::Int(7)),
+                    "expected Int(7), got {:?}", spec.value);
             }
             _ => panic!("expected SetVar"),
         }

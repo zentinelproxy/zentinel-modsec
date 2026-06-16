@@ -16,23 +16,23 @@
 //! ## Quick Start
 //!
 //! ```ignore
-//! use zentinel_modsec::{ModSecurity, Rules, Transaction};
+//! use zentinel_modsec::ModSecurity;
 //!
-//! // Create engine and load rules
-//! let modsec = ModSecurity::new();
-//! let mut rules = Rules::new();
-//! rules.add_plain("SecRuleEngine On")?;
-//! rules.add_file("/etc/modsecurity/crs/rules/*.conf")?;
+//! // Load rules from an inline string (or use ModSecurity::from_file(path)).
+//! let modsec = ModSecurity::from_string(r#"
+//!     SecRuleEngine On
+//!     SecRule REQUEST_URI "@contains /admin" "id:1,phase:1,deny,status:403"
+//! "#)?;
 //!
 //! // Process a request
-//! let mut tx = modsec.transaction(&rules);
+//! let mut tx = modsec.new_transaction();
 //! tx.process_uri("/api/users?id=1", "GET", "HTTP/1.1")?;
 //! tx.add_request_header("Host", "example.com")?;
 //! tx.process_request_headers()?;
 //!
 //! // Check for intervention
 //! if let Some(intervention) = tx.intervention() {
-//!     println!("Blocked: status={}", intervention.status());
+//!     println!("Blocked: status={}", intervention.status);
 //! }
 //! ```
 

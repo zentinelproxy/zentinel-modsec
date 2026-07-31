@@ -326,10 +326,22 @@ impl Transaction {
             &self.captures,
         );
 
-        // Resolve variables from all specs
+        // Resolve variables from all specs.
+        //
+        // A spec in count mode (`&VAR`) contributes the *number* of matching
+        // values as a single value — 0 when the variable is absent — rather than
+        // the values themselves. This matches ModSecurity's `&VARIABLE` semantics
+        // and is what CRS's `SecRule &TX:x "@eq 0"` initialization relies on.
+        // Emitting a value even for an absent count also keeps the spec out of
+        // the "resolved to nothing" early-return below, so `&x "@eq 0"` matches.
         let mut all_values = Vec::new();
         for spec in &rule.variables {
-            all_values.extend(resolver.resolve(spec));
+            let resolved = resolver.resolve(spec);
+            if spec.count_mode {
+                all_values.push((format!("&{:?}", spec.name), resolved.len().to_string()));
+            } else {
+                all_values.extend(resolved);
+            }
         }
 
         if all_values.is_empty() {

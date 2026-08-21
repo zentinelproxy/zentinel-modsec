@@ -191,6 +191,7 @@ impl VariableName {
                 | Self::Global | Self::Resource | Self::User | Self::Geo
                 | Self::MatchedVars | Self::MatchedVarsNames
                 | Self::Files | Self::FilesSizes | Self::FilesTmpnames | Self::FilesNames
+                | Self::MultipartPartHeaders
         )
     }
 }
@@ -228,9 +229,43 @@ pub fn parse_variables(input: &str) -> Result<Vec<VariableSpec>> {
     Ok(variables)
 }
 
+/// Parse a `SecRuleUpdateTargetById`-style target list.
+///
+/// Unlike [`parse_variables`], exclusions (`!TARGET`) are returned separately
+/// rather than being attached to the positive specs, because for a target
+/// update they must be applied to the *existing* variables of the rule being
+/// updated. Returns `(positive_specs, exclusion_strings)`.
+pub fn parse_update_targets(input: &str) -> Result<(Vec<VariableSpec>, Vec<String>)> {
+    let mut additions = Vec::new();
+    let mut exclusions = Vec::new();
+
+    for part in input.split('|') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        if let Some(excl) = part.strip_prefix('!') {
+            // Validate the collection name so a typo'd exclusion is a load
+            // error rather than a silently dead exclusion.
+            let name_end = excl.find(':').unwrap_or(excl.len());
+            let name_str = &excl[..name_end];
+            if VariableName::from_str(name_str).is_none() {
+                return Err(Error::UnknownVariable {
+                    name: name_str.to_string(),
+                });
+            }
+            exclusions.push(excl.to_string());
+        } else {
+            additions.push(parse_single_variable(part)?);
+        }
+    }
+
+    Ok((additions, exclusions))
+}
+
 /// Parse a single variable specification.
 #[inline]
-fn parse_single_variable(input: &str) -> Result<VariableSpec> {
+pub(crate) fn parse_single_variable(input: &str) -> Result<VariableSpec> {
     let input = input.trim();
     let bytes = input.as_bytes();
 

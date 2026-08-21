@@ -44,7 +44,7 @@ impl<'a> VariableResolver<'a> {
         } else {
             values
                 .into_iter()
-                .filter(|(k, _)| !spec.exclusions.iter().any(|e| k.contains(e)))
+                .filter(|(k, _)| !spec.exclusions.iter().any(|e| exclusion_matches(k, e)))
                 .collect()
         }
     }
@@ -99,11 +99,57 @@ impl<'a> VariableResolver<'a> {
             VariableName::ArgsPost => {
                 self.resolve_collection(&self.request.args_post, "ARGS_POST", selection)
             }
+            VariableName::ArgsNames => self.resolve_collection_names(
+                &[&self.request.args_get, &self.request.args_post],
+                "ARGS_NAMES",
+                selection,
+            ),
+            VariableName::ArgsGetNames => {
+                self.resolve_collection_names(&[&self.request.args_get], "ARGS_GET_NAMES", selection)
+            }
+            VariableName::ArgsPostNames => self.resolve_collection_names(
+                &[&self.request.args_post],
+                "ARGS_POST_NAMES",
+                selection,
+            ),
             VariableName::RequestHeaders => {
                 self.resolve_collection_ci(&self.request.headers, "REQUEST_HEADERS", selection)
             }
+            VariableName::RequestHeadersNames => self.resolve_collection_names(
+                &[&self.request.headers],
+                "REQUEST_HEADERS_NAMES",
+                selection,
+            ),
             VariableName::RequestCookies => {
                 self.resolve_collection(&self.request.cookies, "REQUEST_COOKIES", selection)
+            }
+            VariableName::RequestCookiesNames => self.resolve_collection_names(
+                &[&self.request.cookies],
+                "REQUEST_COOKIES_NAMES",
+                selection,
+            ),
+
+            // Multipart body processor results
+            VariableName::MultipartPartHeaders => self.resolve_collection(
+                &self.request.multipart_part_headers,
+                "MULTIPART_PART_HEADERS",
+                selection,
+            ),
+            VariableName::Files => {
+                self.resolve_collection(&self.request.files, "FILES", selection)
+            }
+            VariableName::FilesNames => {
+                self.resolve_collection_names(&[&self.request.files], "FILES_NAMES", selection)
+            }
+            VariableName::ReqBodyProcessor => {
+                if self.request.body_processor.is_empty() {
+                    vec![]
+                } else {
+                    vec![(
+                        "REQBODY_PROCESSOR".to_string(),
+                        self.request.body_processor.clone(),
+                    )]
+                }
             }
 
             // Response variables
@@ -235,6 +281,35 @@ impl<'a> VariableResolver<'a> {
         result
     }
 
+    /// Resolve a `*_NAMES` collection: the values are the keys of the backing
+    /// collection(s), one entry per stored value (duplicates preserved,
+    /// matching ModSecurity).
+    fn resolve_collection_names(
+        &self,
+        collections: &[&super::collection::HashMapCollection],
+        prefix: &str,
+        selection: &Option<Selection>,
+    ) -> Vec<(String, String)> {
+        use super::collection::Collection;
+
+        let mut result = Vec::new();
+        for collection in collections {
+            for (key, _) in collection.all() {
+                let selected = match selection {
+                    Some(Selection::Key(sel)) => key.eq_ignore_ascii_case(sel),
+                    Some(Selection::Regex(pattern)) => Regex::new(pattern)
+                        .map(|re| re.is_match(key))
+                        .unwrap_or(false),
+                    None => true,
+                };
+                if selected {
+                    result.push((format!("{}:{}", prefix, key), key.to_string()));
+                }
+            }
+        }
+        result
+    }
+
     /// Resolve TX collection.
     fn resolve_tx_collection(&self, selection: &Option<Selection>) -> Vec<(String, String)> {
         use super::collection::Collection;
@@ -268,5 +343,73 @@ impl<'a> VariableResolver<'a> {
                 .map(|(k, v)| (format!("TX:{}", k), v.to_string()))
                 .collect(),
         }
+    }
+}
+
+/// Check whether a resolved variable key (e.g. `ARGS:password`) is excluded by
+/// a target exclusion (`!TARGET` in a rule's variable list or in
+/// `SecRuleUpdateTargetById`).
+///
+/// Supported exclusion forms, per ModSecurity:
+/// - `COLLECTION:key` — excludes that member (key compared case-insensitively);
+/// - `COLLECTION:/regex/` — excludes members whose key matches the regex;
+/// - `COLLECTION` — excludes the entire collection.
+fn exclusion_matches(key: &str, exclusion: &str) -> bool {
+    match exclusion.split_once(':') {
+        Some((excl_coll, excl_sel)) => {
+            let Some((key_coll, key_member)) = key.split_once(':') else {
+                return false;
+            };
+            if !key_coll.eq_ignore_ascii_case(excl_coll) {
+                return false;
+            }
+            if excl_sel.len() > 2 && excl_sel.starts_with('/') && excl_sel.ends_with('/') {
+                Regex::new(&excl_sel[1..excl_sel.len() - 1])
+                    .map(|re| re.is_match(key_member))
+                    .unwrap_or(false)
+            } else {
+                key_member.eq_ignore_ascii_case(excl_sel)
+            }
+        }
+        None => {
+            let key_coll = key.split_once(':').map(|(c, _)| c).unwrap_or(key);
+            key_coll.eq_ignore_ascii_case(exclusion)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::exclusion_matches;
+
+    #[test]
+    fn test_exclusion_exact_key() {
+        assert!(exclusion_matches("ARGS:password", "ARGS:password"));
+        assert!(exclusion_matches("ARGS:Password", "ARGS:password"));
+        // Must NOT be a prefix/substring match.
+        assert!(!exclusion_matches("ARGS:password2", "ARGS:password"));
+        assert!(!exclusion_matches("ARGS:xpassword", "ARGS:password"));
+        // Different collection.
+        assert!(!exclusion_matches("REQUEST_COOKIES:password", "ARGS:password"));
+    }
+
+    #[test]
+    fn test_exclusion_regex_key() {
+        // CRS pattern: SecRuleUpdateTargetById 941100 "!REQUEST_COOKIES:/^_ga(?:_\w+)?$/"
+        assert!(exclusion_matches(
+            "REQUEST_COOKIES:_ga_ABC123",
+            r"REQUEST_COOKIES:/^_ga(?:_\w+)?$/"
+        ));
+        assert!(exclusion_matches("REQUEST_COOKIES:_ga", r"REQUEST_COOKIES:/^_ga(?:_\w+)?$/"));
+        assert!(!exclusion_matches(
+            "REQUEST_COOKIES:session",
+            r"REQUEST_COOKIES:/^_ga(?:_\w+)?$/"
+        ));
+    }
+
+    #[test]
+    fn test_exclusion_whole_collection() {
+        assert!(exclusion_matches("ARGS:anything", "ARGS"));
+        assert!(!exclusion_matches("ARGS_NAMES:anything", "ARGS"));
     }
 }

@@ -2,7 +2,11 @@
 
 use crate::error::Result;
 use crate::operators::{compile_operator, Operator};
-use crate::parser::{Action, MetadataAction, Directive, Parser, VariableSpec, OperatorSpec, OperatorName, FlowAction, RuleEngineMode as ParserRuleEngineMode};
+use crate::parser::{
+    Action, Directive, FlowAction, MetadataAction, OperatorName, OperatorSpec, Parser,
+    RuleEngineMode as ParserRuleEngineMode, RuleIdSelector, Selection, UpdateTargetById,
+    VariableSpec,
+};
 use crate::transformations::TransformationPipeline;
 
 use super::phase::Phase;
@@ -148,6 +152,24 @@ impl CompiledRuleset {
         let mut ruleset = Self::new();
         let mut pending_chain: Option<(Phase, usize)> = None;
 
+        // SecRuleRemoveById and SecRuleUpdateTargetById are applied against
+        // the whole ruleset once loading completes (like ModSecurity, where
+        // they modify already-defined rules). Removals are collected up front
+        // so removed rules are never compiled; target updates are applied
+        // after the compile loop.
+        let removals: Vec<RuleIdSelector> = directives
+            .iter()
+            .filter_map(|d| match d {
+                Directive::SecRuleRemoveById(ids) => Some(ids.iter().copied()),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        let mut target_updates: Vec<UpdateTargetById> = Vec::new();
+        // When a removed rule is a chain head, its continuation rules (which
+        // usually carry no id of their own) must be dropped with it.
+        let mut skipping_removed_chain = false;
+
         for directive in directives {
             match directive {
                 Directive::SecRuleEngine(mode) => {
@@ -161,6 +183,17 @@ impl CompiledRuleset {
                     let phase = extract_phase(&rule.actions);
                     let id = extract_id(&rule.actions);
                     let is_chain = has_chain(&rule.actions);
+
+                    if skipping_removed_chain {
+                        // Continuation of a removed chained rule.
+                        skipping_removed_chain = is_chain;
+                        continue;
+                    }
+                    if id_is_removed(&id, &removals) {
+                        skipping_removed_chain = is_chain;
+                        continue;
+                    }
+
                     let transformations = extract_transformations(&rule.actions)?;
 
                     let operator_spec = rule.operator.clone();
@@ -228,6 +261,12 @@ impl CompiledRuleset {
 
                     ruleset.rules.add(phase, compiled);
                 }
+                Directive::SecRuleUpdateTargetById(update) => {
+                    // Applied after every rule is compiled: the directive may
+                    // appear before or after the rule it targets, and CRS
+                    // exclusion files are conventionally included last.
+                    target_updates.push(update.clone());
+                }
                 Directive::SecMarker(marker) => {
                     // Add marker at current position in default phase
                     let phase = Phase::RequestHeaders;
@@ -239,6 +278,8 @@ impl CompiledRuleset {
                 }
             }
         }
+
+        apply_target_updates(&mut ruleset, &target_updates);
 
         Ok(ruleset)
     }
@@ -281,6 +322,81 @@ fn extract_phase(actions: &[Action]) -> Phase {
 }
 
 /// Extract rule ID from actions.
+
+/// Check whether a rule's ID is covered by any `SecRuleRemoveById` selector.
+///
+/// Rules without an ID cannot be targeted by ID, and an ID that does not parse
+/// as a number never matches a numeric selector.
+fn id_is_removed(id: &Option<String>, removals: &[RuleIdSelector]) -> bool {
+    let Some(numeric) = id.as_ref().and_then(|s| s.parse::<u64>().ok()) else {
+        return false;
+    };
+    removals.iter().any(|selector| selector.matches(numeric))
+}
+
+/// Apply `SecRuleUpdateTargetById` directives to the compiled rules.
+///
+/// ModSecurity semantics, as CRS exclusion files rely on them:
+///
+/// - `SecRuleUpdateTargetById 942100 "!ARGS:password"` adds a target exclusion,
+///   so the rule stops inspecting that target. The exclusion is pushed onto
+///   every variable of the rule, because the resolver applies exclusions
+///   per-variable when expanding collections.
+/// - `SecRuleUpdateTargetById 942100 "ARGS:foo"` appends a target.
+/// - `SecRuleUpdateTargetById 942100 "ARGS:foo" "ARGS:bar"` replaces the
+///   `ARGS:bar` target with `ARGS:foo`.
+///
+/// The update applies to the rule carrying the ID. For a chained rule that is
+/// the chain starter, matching ModSecurity, which identifies a chain by the
+/// starter's ID.
+fn apply_target_updates(ruleset: &mut CompiledRuleset, updates: &[UpdateTargetById]) {
+    if updates.is_empty() {
+        return;
+    }
+    for rules in ruleset.rules.by_phase.values_mut() {
+        for rule in rules.iter_mut() {
+            let Some(numeric) = rule.id.as_ref().and_then(|s| s.parse::<u64>().ok()) else {
+                continue;
+            };
+            for update in updates {
+                if !update.ids.iter().any(|selector| selector.matches(numeric)) {
+                    continue;
+                }
+                if let Some(replaced) = &update.replaced {
+                    rule.variables
+                        .retain(|var| !variable_matches_target(var, replaced));
+                }
+                for exclusion in &update.exclusions {
+                    for var in rule.variables.iter_mut() {
+                        if !var.exclusions.iter().any(|e| e == exclusion) {
+                            var.exclusions.push(exclusion.clone());
+                        }
+                    }
+                }
+                rule.variables.extend(update.additions.iter().cloned());
+            }
+        }
+    }
+}
+
+/// Whether a rule variable refers to the target named by a directive argument
+/// such as `ARGS:bar` or `REQUEST_HEADERS`.
+fn variable_matches_target(var: &VariableSpec, target: &str) -> bool {
+    let (collection, key) = match target.split_once(':') {
+        Some((c, k)) => (c, Some(k)),
+        None => (target, None),
+    };
+    if !format!("{:?}", var.name).eq_ignore_ascii_case(collection) {
+        return false;
+    }
+    match (&var.selection, key) {
+        (None, None) => true,
+        (Some(Selection::Key(existing)), Some(k)) => existing.eq_ignore_ascii_case(k),
+        _ => false,
+    }
+}
+
+
 fn extract_id(actions: &[Action]) -> Option<String> {
     for action in actions {
         if let Action::Metadata(MetadataAction::Id(id)) = action {

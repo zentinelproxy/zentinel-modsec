@@ -90,7 +90,37 @@ impl Transaction {
     /// Process request body (Phase 2).
     pub fn process_request_body(&mut self) -> Result<()> {
         self.phase = Phase::RequestBody;
-        self.request.parse_form_body();
+
+        let content_type = self
+            .request
+            .headers
+            .get("content-type")
+            .and_then(|v| v.first().map(|s| s.to_string()));
+        let ct_lower = content_type
+            .as_deref()
+            .map(|ct| ct.trim_start().to_ascii_lowercase())
+            .unwrap_or_default();
+
+        if ct_lower.starts_with("multipart/form-data") {
+            // Multipart body processor: populates ARGS_POST, FILES and
+            // MULTIPART_PART_HEADERS. Never fall back to the urlencoded
+            // parser for multipart payloads — that would produce bogus ARGS.
+            if !self
+                .request
+                .parse_multipart_body(content_type.as_deref().unwrap_or_default())
+            {
+                tracing::warn!(
+                    "multipart/form-data request without a parseable boundary; \
+                     body arguments were not extracted"
+                );
+            }
+        } else {
+            self.request.parse_form_body();
+            if ct_lower.starts_with("application/x-www-form-urlencoded") {
+                self.request.body_processor = "URLENCODED".to_string();
+            }
+        }
+
         self.run_phase(Phase::RequestBody)?;
         Ok(())
     }

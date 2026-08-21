@@ -236,11 +236,68 @@ const CLEAN_REQUESTS: &[(&str, &str)] = &[
     ("/search?q=hello+world", "GET"),
 ];
 
+// Attack payloads that COMPLEX_RULE's rule 942101 actually matches
+// (union.*select | select.*from | insert.*into, case-insensitive).
 const SQLI_PAYLOADS: &[&str] = &[
-    "/api/users?id=1' OR '1'='1",
-    "/api/users?id=1; DROP TABLE users--",
-    "/search?q=' OR 1=1--",
+    "/api/users?id=1 UNION SELECT * FROM passwords--",
+    "/api/users?id=1; SELECT password FROM users--",
+    "/search?q=insert into logs values('pwned')--",
 ];
+
+// ============================================================================
+// Sanity Helpers
+// ============================================================================
+//
+// Phase-2 rules only execute during request-body processing on both engines.
+// Every comparison below therefore drives phases 1 and 2, and asserts before
+// measuring that the ruleset actually fires on attack input and stays quiet
+// on clean input, so the measured section can never silently become an empty
+// hot path again (issue #15).
+
+fn zentinel_full_request(engine: &zentinel_modsec::ModSecurity, uri: &str, method: &str) -> bool {
+    let mut tx = engine.new_transaction();
+    tx.process_uri(uri, method, "HTTP/1.1").unwrap();
+    tx.add_request_header("Host", "example.com").unwrap();
+    tx.process_request_headers().unwrap();
+    tx.process_request_body().unwrap();
+    tx.intervention().is_some()
+}
+
+fn libmodsec_full_request(msc: &LibModSecurity, rules: &LibRules, uri: &str, method: &str) -> bool {
+    let tx = LibTransaction::new(msc, rules);
+    tx.process_uri(uri, method, "HTTP/1.1");
+    tx.add_request_header("Host", "example.com");
+    tx.process_request_headers();
+    tx.process_request_body();
+    tx.intervention().is_some()
+}
+
+fn assert_rules_fire(
+    zentinel: &zentinel_modsec::ModSecurity,
+    libmsc: &LibModSecurity,
+    librules: &LibRules,
+) {
+    for &uri in SQLI_PAYLOADS {
+        assert!(
+            zentinel_full_request(zentinel, uri, "GET"),
+            "sanity check failed: zentinel-modsec did not block attack payload {uri}"
+        );
+        assert!(
+            libmodsec_full_request(libmsc, librules, uri, "GET"),
+            "sanity check failed: libmodsecurity did not block attack payload {uri}"
+        );
+    }
+    for &(uri, method) in CLEAN_REQUESTS {
+        assert!(
+            !zentinel_full_request(zentinel, uri, method),
+            "sanity check failed: zentinel-modsec blocked clean request {uri}"
+        );
+        assert!(
+            !libmodsec_full_request(libmsc, librules, uri, method),
+            "sanity check failed: libmodsecurity blocked clean request {uri}"
+        );
+    }
+}
 
 // ============================================================================
 // Comparison Benchmarks
@@ -299,46 +356,55 @@ fn bench_transaction_comparison(c: &mut Criterion) {
     let librules = LibRules::new();
     librules.add_rules(COMPLEX_RULE).unwrap();
 
-    // Clean request - zentinel
+    // COMPLEX_RULE's detection rule is phase 2: both engines must run request
+    // body processing, and the payload must match its regex.
+    let attack_uri = "/api/users?id=1 UNION SELECT * FROM passwords--";
+    assert_rules_fire(&zentinel, &libmsc, &librules);
+
+    // Clean request - zentinel (phases 1 and 2)
     group.bench_function("zentinel/clean_request", |b| {
         b.iter(|| {
             let mut tx = zentinel.new_transaction();
             tx.process_uri(black_box("/api/users"), "GET", "HTTP/1.1").unwrap();
             tx.add_request_header("Host", "example.com").unwrap();
             tx.process_request_headers().unwrap();
+            tx.process_request_body().unwrap();
             tx.intervention().is_some()
         })
     });
 
-    // Clean request - libmodsecurity
+    // Clean request - libmodsecurity (phases 1 and 2)
     group.bench_function("libmodsec/clean_request", |b| {
         b.iter(|| {
             let tx = LibTransaction::new(&libmsc, &librules);
             tx.process_uri(black_box("/api/users"), "GET", "HTTP/1.1");
             tx.add_request_header("Host", "example.com");
             tx.process_request_headers();
+            tx.process_request_body();
             tx.intervention()
         })
     });
 
-    // SQLi request - zentinel
+    // SQLi request - zentinel (phases 1 and 2)
     group.bench_function("zentinel/sqli_request", |b| {
         b.iter(|| {
             let mut tx = zentinel.new_transaction();
-            tx.process_uri(black_box("/api/users?id=1' OR '1'='1"), "GET", "HTTP/1.1").unwrap();
+            tx.process_uri(black_box(attack_uri), "GET", "HTTP/1.1").unwrap();
             tx.add_request_header("Host", "example.com").unwrap();
             tx.process_request_headers().unwrap();
+            tx.process_request_body().unwrap();
             tx.intervention().is_some()
         })
     });
 
-    // SQLi request - libmodsecurity
+    // SQLi request - libmodsecurity (phases 1 and 2)
     group.bench_function("libmodsec/sqli_request", |b| {
         b.iter(|| {
             let tx = LibTransaction::new(&libmsc, &librules);
-            tx.process_uri(black_box("/api/users?id=1' OR '1'='1"), "GET", "HTTP/1.1");
+            tx.process_uri(black_box(attack_uri), "GET", "HTTP/1.1");
             tx.add_request_header("Host", "example.com");
             tx.process_request_headers();
+            tx.process_request_body();
             tx.intervention()
         })
     });
@@ -358,6 +424,31 @@ fn bench_body_comparison(c: &mut Criterion) {
     librules.add_rules(SQLI_RULE).unwrap();
 
     let body = b"username=admin&password=' OR '1'='1' --";
+
+    // Sanity: the SQLi body must trigger the phase-2 rule on both engines.
+    {
+        let mut tx = zentinel.new_transaction();
+        tx.process_uri("/api/login", "POST", "HTTP/1.1").unwrap();
+        tx.add_request_header("Content-Type", "application/x-www-form-urlencoded").unwrap();
+        tx.process_request_headers().unwrap();
+        tx.append_request_body(body).unwrap();
+        tx.process_request_body().unwrap();
+        assert!(
+            tx.intervention().is_some(),
+            "sanity check failed: zentinel-modsec did not block SQLi body"
+        );
+
+        let ltx = LibTransaction::new(&libmsc, &librules);
+        ltx.process_uri("/api/login", "POST", "HTTP/1.1");
+        ltx.add_request_header("Content-Type", "application/x-www-form-urlencoded");
+        ltx.process_request_headers();
+        ltx.append_request_body(body);
+        ltx.process_request_body();
+        assert!(
+            ltx.intervention().is_some(),
+            "sanity check failed: libmodsecurity did not block SQLi body"
+        );
+    }
 
     // zentinel
     group.bench_function("zentinel/post_body_sqli", |b| {
@@ -402,7 +493,12 @@ fn bench_throughput_comparison(c: &mut Criterion) {
     let librules = LibRules::new();
     librules.add_rules(COMPLEX_RULE).unwrap();
 
-    // Clean traffic - zentinel
+    // The detection rule in COMPLEX_RULE is phase 2: the loops below must run
+    // request body processing on both engines or no rule executes at all
+    // (issue #15). Verify the rules fire before measuring anything.
+    assert_rules_fire(&zentinel, &libmsc, &librules);
+
+    // Clean traffic - zentinel (phases 1 and 2)
     group.bench_function("zentinel/clean_traffic", |b| {
         let mut idx = 0;
         b.iter(|| {
@@ -413,11 +509,12 @@ fn bench_throughput_comparison(c: &mut Criterion) {
             tx.process_uri(black_box(uri), method, "HTTP/1.1").unwrap();
             tx.add_request_header("Host", "example.com").unwrap();
             tx.process_request_headers().unwrap();
+            tx.process_request_body().unwrap();
             tx.intervention().is_some()
         })
     });
 
-    // Clean traffic - libmodsecurity
+    // Clean traffic - libmodsecurity (phases 1 and 2)
     group.bench_function("libmodsec/clean_traffic", |b| {
         let mut idx = 0;
         b.iter(|| {
@@ -428,11 +525,12 @@ fn bench_throughput_comparison(c: &mut Criterion) {
             tx.process_uri(black_box(uri), method, "HTTP/1.1");
             tx.add_request_header("Host", "example.com");
             tx.process_request_headers();
+            tx.process_request_body();
             tx.intervention()
         })
     });
 
-    // Attack traffic - zentinel
+    // Attack traffic - zentinel (phases 1 and 2)
     group.bench_function("zentinel/attack_traffic", |b| {
         let mut idx = 0;
         b.iter(|| {
@@ -443,11 +541,12 @@ fn bench_throughput_comparison(c: &mut Criterion) {
             tx.process_uri(black_box(uri), "GET", "HTTP/1.1").unwrap();
             tx.add_request_header("Host", "example.com").unwrap();
             tx.process_request_headers().unwrap();
+            tx.process_request_body().unwrap();
             tx.intervention().is_some()
         })
     });
 
-    // Attack traffic - libmodsecurity
+    // Attack traffic - libmodsecurity (phases 1 and 2)
     group.bench_function("libmodsec/attack_traffic", |b| {
         let mut idx = 0;
         b.iter(|| {
@@ -458,6 +557,7 @@ fn bench_throughput_comparison(c: &mut Criterion) {
             tx.process_uri(black_box(uri), "GET", "HTTP/1.1");
             tx.add_request_header("Host", "example.com");
             tx.process_request_headers();
+            tx.process_request_body();
             tx.intervention()
         })
     });

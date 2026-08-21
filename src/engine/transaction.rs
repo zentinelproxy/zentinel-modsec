@@ -7,7 +7,9 @@ use super::intervention::Intervention;
 use super::phase::Phase;
 use super::ruleset::{CompiledRule, CompiledRuleset, RuleEngineMode};
 use super::scoring::AnomalyScore;
-use crate::actions::{execute_actions, DisruptiveOutcome, FlowOutcome, SetVarOp, SetVarOperation};
+use crate::actions::{
+    execute_actions, ActionResult, DisruptiveOutcome, FlowOutcome, SetVarOp, SetVarOperation,
+};
 use crate::error::Result;
 use crate::operators::{compile_operator, Operator};
 use crate::parser::OperatorSpec;
@@ -175,6 +177,9 @@ impl Transaction {
         }
 
         let mut chain_state = ChainState::new();
+        // A chain is one logical rule: the starter's actions fire only when
+        // every link matches, so they are held here until the chain completes.
+        let mut pending_chain_actions: Option<ActionResult> = None;
         let mut skip_count: u32 = 0;
         let mut skip_after: Option<String> = None;
 
@@ -224,6 +229,29 @@ impl Transaction {
                 if let Some(ref id) = rule.id {
                     self.matched_rules.push(id.clone());
                 }
+
+                if rule.is_chain {
+                    // A link that expects more links after it. Hold the
+                    // starter's actions: nothing may fire until the whole
+                    // chain has matched.
+                    if !chain_state.in_chain {
+                        chain_state.start_chain(idx);
+                        pending_chain_actions = Some(action_result);
+                    }
+                    chain_state.continue_chain(true, &captures);
+                    idx += 1;
+                    continue;
+                }
+
+                // Either a standalone rule, or the final link of a chain that
+                // has now matched in full. A completed chain executes the
+                // starter's actions, not the last link's.
+                let action_result = if chain_state.in_chain {
+                    chain_state.reset();
+                    pending_chain_actions.take().unwrap_or(action_result)
+                } else {
+                    action_result
+                };
 
                 // Apply setvar operations
                 for op in &action_result.setvar_ops {
@@ -295,9 +323,18 @@ impl Transaction {
                     }
                 }
             } else {
-                // Rule didn't match
-                if chain_state.in_chain {
-                    chain_state.chain_matched = false;
+                // Rule didn't match. If it belongs to a chain, the chain as a
+                // whole cannot match: drop the starter's held actions and skip
+                // past the remaining links so they are never evaluated on
+                // their own.
+                if chain_state.in_chain || rule.is_chain {
+                    chain_state.reset();
+                    pending_chain_actions = None;
+                    while idx < rules.len() && rules[idx].is_chain {
+                        idx += 1;
+                    }
+                    idx += 1;
+                    continue;
                 }
             }
 

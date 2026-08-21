@@ -158,7 +158,15 @@ impl CompiledRuleset {
                     };
                 }
                 Directive::SecRule(rule) => {
-                    let phase = extract_phase(&rule.actions);
+                    // A chained rule inherits the phase of its chain starter.
+                    // ModSecurity does not allow a `phase` action on
+                    // continuation rules, so deriving it from the rule's own
+                    // actions would drop every continuation into the default
+                    // phase and split the chain across two phases.
+                    let phase = match pending_chain {
+                        Some((chain_phase, _)) => chain_phase,
+                        None => extract_phase(&rule.actions),
+                    };
                     let id = extract_id(&rule.actions);
                     let is_chain = has_chain(&rule.actions);
                     let transformations = extract_transformations(&rule.actions)?;

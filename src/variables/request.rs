@@ -33,9 +33,17 @@ pub struct RequestData {
     /// populated by the multipart body processor. Backs `FILES`/`FILES_NAMES`.
     pub files: HashMapCollection,
     /// Name of the body processor that handled the request body
-    /// (`MULTIPART`, `URLENCODED`, or empty when none ran). Backs
+    /// (`MULTIPART`, `URLENCODED`, `JSON`, or empty when none ran). Backs
     /// `REQBODY_PROCESSOR`.
     pub body_processor: String,
+    /// Why the body processor could not process the body, if it failed.
+    ///
+    /// Backs `REQBODY_ERROR` (1 when set, 0 otherwise) and
+    /// `REQBODY_ERROR_MSG`. CRS rule 200002 blocks on this, which only works
+    /// if a failed parse is observable: a strict parser rejecting a payload
+    /// that the origin application happily accepts is a bypass when it
+    /// happens quietly.
+    pub body_error: Option<String>,
     /// Request body.
     pub body: Vec<u8>,
     /// Client IP address.
@@ -239,12 +247,142 @@ impl RequestData {
         }
     }
 
+    /// Parse a JSON body into `args_post`, mirroring ModSecurity's JSON
+    /// request body processor.
+    ///
+    /// Every scalar in the document becomes one argument named by its path,
+    /// prefixed with `json.` and joined with `.`, with array indices as path
+    /// segments — the naming libmodsecurity uses, so CRS exclusions written as
+    /// `ARGS:json.user.name` keep working:
+    ///
+    /// ```text
+    /// {"user": {"name": "bob"}, "tags": ["a", "b"]}
+    ///   -> json.user.name = bob
+    ///      json.tags.0    = a
+    ///      json.tags.1    = b
+    /// ```
+    ///
+    /// Returns `Ok(())` on success, or the reason the body could not be
+    /// processed. The caller must surface that reason rather than treating it
+    /// as an empty body: a strict parser rejecting a payload that the origin
+    /// application accepts is a bypass if it happens quietly.
+    pub fn parse_json_body(&mut self) -> Result<(), String> {
+        self.body_processor = "JSON".to_string();
+
+        let value: serde_json::Value = match serde_json::from_slice(&self.body) {
+            Ok(v) => v,
+            Err(e) => {
+                let msg = format!("JSON parsing error: {e}");
+                self.body_error = Some(msg.clone());
+                return Err(msg);
+            }
+        };
+
+        let mut count = 0usize;
+        let mut path = String::from("json");
+        let truncated = flatten_json(&value, &mut path, &mut self.args_post, &mut count, 0);
+
+        if truncated {
+            let msg = format!(
+                "JSON body exceeded processing limits ({MAX_JSON_ARGS} arguments or \
+                 {MAX_JSON_DEPTH} levels of nesting); only part of the body was inspected"
+            );
+            self.body_error = Some(msg.clone());
+            return Err(msg);
+        }
+
+        Ok(())
+    }
+
     /// Get all arguments (GET + POST combined).
     pub fn all_args(&self) -> Vec<(&str, &str)> {
         let mut all = self.args_get.all();
         all.extend(self.args_post.all());
         all
     }
+}
+
+/// Most arguments extracted from a single JSON body.
+///
+/// A hostile body can be small on the wire and still expand into an enormous
+/// number of arguments — `[[[...]]]` or a long array of scalars — each of
+/// which would then be run through every rule's operator. The cap bounds that
+/// work; exceeding it is reported as a body-processor error rather than
+/// silently truncating, since a partially inspected body is not a safe body.
+const MAX_JSON_ARGS: usize = 4096;
+
+/// Deepest JSON nesting the flattener will descend.
+///
+/// `serde_json` already refuses to *parse* beyond its own recursion limit;
+/// this bounds the separate recursion done here.
+const MAX_JSON_DEPTH: usize = 64;
+
+/// Flatten a JSON value into `args`, naming each scalar by its path.
+///
+/// `path` is the prefix built so far and is restored before returning, so one
+/// buffer is reused for the whole document. Returns `true` if a limit was hit
+/// and the result is therefore incomplete.
+fn flatten_json(
+    value: &serde_json::Value,
+    path: &mut String,
+    args: &mut HashMapCollection,
+    count: &mut usize,
+    depth: usize,
+) -> bool {
+    if depth > MAX_JSON_DEPTH {
+        return true;
+    }
+
+    match value {
+        serde_json::Value::Object(map) => {
+            for (key, child) in map {
+                let restore = path.len();
+                path.push('.');
+                path.push_str(key);
+                let truncated = flatten_json(child, path, args, count, depth + 1);
+                path.truncate(restore);
+                if truncated {
+                    return true;
+                }
+            }
+            false
+        }
+        serde_json::Value::Array(items) => {
+            for (index, child) in items.iter().enumerate() {
+                let restore = path.len();
+                path.push('.');
+                path.push_str(&index.to_string());
+                let truncated = flatten_json(child, path, args, count, depth + 1);
+                path.truncate(restore);
+                if truncated {
+                    return true;
+                }
+            }
+            false
+        }
+        // Scalars are the leaves that become arguments. `null` contributes an
+        // empty value rather than being skipped, so a rule testing for the
+        // presence of a key still sees it.
+        serde_json::Value::String(s) => push_json_arg(path, s.clone(), args, count),
+        serde_json::Value::Number(n) => push_json_arg(path, n.to_string(), args, count),
+        serde_json::Value::Bool(b) => push_json_arg(path, b.to_string(), args, count),
+        serde_json::Value::Null => push_json_arg(path, String::new(), args, count),
+    }
+}
+
+/// Record one flattened scalar. Returns `true` once the argument cap is hit.
+fn push_json_arg(
+    path: &str,
+    value: String,
+    args: &mut HashMapCollection,
+    count: &mut usize,
+) -> bool {
+    if *count >= MAX_JSON_ARGS {
+        return true;
+    }
+    *count += 1;
+    args.add(path.to_string(), value);
+    false
 }
 
 /// Extract the `boundary` parameter from a multipart Content-Type value.

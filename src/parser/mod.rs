@@ -25,8 +25,11 @@ mod operator;
 mod action;
 
 pub use lexer::{Lexer, Token, TokenKind};
-pub use directive::{Directive, SecRule, SecAction, SecMarker, RuleEngineMode};
+pub use directive::{
+    Directive, RuleEngineMode, RuleIdSelector, SecAction, SecMarker, SecRule, UpdateTargetById,
+};
 pub use variable::{VariableSpec, VariableName, Selection};
+pub(crate) use variable::parse_single_variable;
 pub use operator::{OperatorSpec, OperatorName};
 pub use action::{Action, DisruptiveAction, FlowAction, MetadataAction, DataAction, LoggingAction, ControlAction, SetVarSpec, SetVarValue, parse_actions};
 
@@ -142,6 +145,7 @@ impl Parser {
             "secruleengine" => self.parse_secruleengine(lexer),
             "secdefaultaction" => self.parse_secdefaultaction(lexer),
             "secruleremovebyid" => self.parse_secruleremovebyid(lexer),
+            "secruleupdatetargetbyid" => self.parse_secruleupdatetargetbyid(lexer),
             "secrequestbodyaccess" => self.parse_boolean_directive(lexer, "SecRequestBodyAccess"),
             "secresponsebodyaccess" => self.parse_boolean_directive(lexer, "SecResponseBodyAccess"),
             "include" => self.parse_include(lexer),
@@ -258,13 +262,104 @@ impl Parser {
     }
 
     /// Parse a SecRuleRemoveById directive.
+    ///
+    /// ModSecurity allows multiple IDs and ID ranges in a single directive,
+    /// e.g. `SecRuleRemoveById 1 2 "9000-9010"`. IDs may appear as several
+    /// arguments and/or space-separated inside one (quoted) argument.
     fn parse_secruleremovebyid(&mut self, lexer: &mut Lexer) -> Result<Directive> {
-        let ids_str = self.expect_argument(lexer, "SecRuleRemoveById")?;
-        let ids: Vec<u64> = ids_str
-            .split_whitespace()
-            .filter_map(|s| s.parse().ok())
-            .collect();
+        let mut ids = Vec::new();
+        loop {
+            let arg = self.expect_argument(lexer, "SecRuleRemoveById")?;
+            ids.extend(self.parse_id_selectors(&arg, "SecRuleRemoveById")?);
+            if !self.peek_more_arguments(lexer) {
+                break;
+            }
+        }
         Ok(Directive::SecRuleRemoveById(ids))
+    }
+
+    /// Parse a SecRuleUpdateTargetById directive.
+    ///
+    /// Syntax: `SecRuleUpdateTargetById ID TARGET1[|TARGET2|...] [REPLACED_TARGET]`
+    /// where ID is a rule ID or ID range (space-separated lists accepted when
+    /// quoted), targets may be `!`-prefixed exclusions, and the optional third
+    /// argument names an existing target to replace.
+    fn parse_secruleupdatetargetbyid(&mut self, lexer: &mut Lexer) -> Result<Directive> {
+        let ids_str = self.expect_argument(lexer, "SecRuleUpdateTargetById id")?;
+        let ids = self.parse_id_selectors(&ids_str, "SecRuleUpdateTargetById")?;
+
+        let targets_str = self.expect_argument(lexer, "SecRuleUpdateTargetById targets")?;
+        let (additions, exclusions) = variable::parse_update_targets(&targets_str)?;
+        if additions.is_empty() && exclusions.is_empty() {
+            return Err(Error::parse(
+                "SecRuleUpdateTargetById requires at least one target",
+                self.location.to_string(),
+            ));
+        }
+
+        let replaced = if self.peek_more_arguments(lexer) {
+            Some(self.expect_argument(lexer, "SecRuleUpdateTargetById replaced target")?)
+        } else {
+            None
+        };
+
+        Ok(Directive::SecRuleUpdateTargetById(UpdateTargetById {
+            ids,
+            additions,
+            exclusions,
+            replaced,
+            location: self.location.clone(),
+        }))
+    }
+
+    /// Parse a whitespace-separated list of rule IDs and inclusive ID ranges
+    /// (`942100` or `942100-942199`).
+    fn parse_id_selectors(&self, input: &str, context: &str) -> Result<Vec<RuleIdSelector>> {
+        let mut selectors = Vec::new();
+        for token in input.split_whitespace() {
+            let selector = if let Some((start, end)) = token.split_once('-') {
+                let start: u64 = start.trim().parse().map_err(|_| {
+                    Error::parse(
+                        format!("{context}: invalid rule id range '{token}'"),
+                        self.location.to_string(),
+                    )
+                })?;
+                let end: u64 = end.trim().parse().map_err(|_| {
+                    Error::parse(
+                        format!("{context}: invalid rule id range '{token}'"),
+                        self.location.to_string(),
+                    )
+                })?;
+                if start > end {
+                    return Err(Error::parse(
+                        format!("{context}: invalid rule id range '{token}' (start > end)"),
+                        self.location.to_string(),
+                    ));
+                }
+                RuleIdSelector::Range(start, end)
+            } else {
+                RuleIdSelector::Single(token.parse().map_err(|_| {
+                    Error::parse(
+                        format!("{context}: invalid rule id '{token}'"),
+                        self.location.to_string(),
+                    )
+                })?)
+            };
+            selectors.push(selector);
+        }
+        if selectors.is_empty() {
+            return Err(Error::parse(
+                format!("{context}: expected at least one rule id"),
+                self.location.to_string(),
+            ));
+        }
+        Ok(selectors)
+    }
+
+    /// Check whether more arguments follow on the current logical line.
+    fn peek_more_arguments(&self, lexer: &mut Lexer) -> bool {
+        lexer.skip_whitespace();
+        !matches!(lexer.peek(), None | Some('\n') | Some('\r') | Some('#'))
     }
 
     /// Parse a boolean directive (On/Off).

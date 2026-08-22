@@ -17,8 +17,10 @@ pub enum Directive {
     SecRuleEngine(RuleEngineMode),
     /// SecDefaultAction directive - default actions for rules.
     SecDefaultAction(Vec<Action>),
-    /// SecRuleRemoveById directive - remove rules by ID.
-    SecRuleRemoveById(Vec<u64>),
+    /// SecRuleRemoveById directive - remove rules by ID or ID range.
+    SecRuleRemoveById(Vec<RuleIdSelector>),
+    /// SecRuleUpdateTargetById directive - update rule targets (CRS exclusions).
+    SecRuleUpdateTargetById(UpdateTargetById),
     /// SecRuleUpdateActionById directive - update rule actions.
     SecRuleUpdateActionById { id: u64, actions: Vec<Action> },
     /// SecRequestBodyAccess directive.
@@ -33,6 +35,49 @@ pub enum Directive {
     Include(PathBuf),
     /// Unknown directive (logged and skipped).
     Unknown(String),
+}
+
+/// A rule ID selector: a single ID or an inclusive ID range.
+///
+/// ModSecurity accepts both forms in `SecRuleRemoveById` and
+/// `SecRuleUpdateTargetById` (e.g. `942100` or `942100-942199`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuleIdSelector {
+    /// A single rule ID.
+    Single(u64),
+    /// An inclusive range of rule IDs.
+    Range(u64, u64),
+}
+
+impl RuleIdSelector {
+    /// Check whether a rule ID matches this selector.
+    pub fn matches(&self, id: u64) -> bool {
+        match *self {
+            Self::Single(s) => id == s,
+            Self::Range(start, end) => (start..=end).contains(&id),
+        }
+    }
+}
+
+/// A parsed `SecRuleUpdateTargetById` directive.
+///
+/// Per ModSecurity semantics:
+/// - positive targets (`ARGS:foo`) are appended to the rule's variable list
+///   (or replace `replaced` when a third argument is given);
+/// - `!`-prefixed targets (`!ARGS:password`) add a target exclusion so that
+///   the named variable is no longer inspected by the rule.
+#[derive(Debug, Clone)]
+pub struct UpdateTargetById {
+    /// The rule IDs (or ranges) to update.
+    pub ids: Vec<RuleIdSelector>,
+    /// Positive targets to append (or to substitute for `replaced`).
+    pub additions: Vec<VariableSpec>,
+    /// Target exclusions (the text after `!`, e.g. `ARGS:password`).
+    pub exclusions: Vec<String>,
+    /// Optional target to replace (third directive argument).
+    pub replaced: Option<String>,
+    /// Source location for diagnostics.
+    pub location: SourceLocation,
 }
 
 /// A SecRule directive.

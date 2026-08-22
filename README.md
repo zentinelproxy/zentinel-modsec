@@ -8,16 +8,16 @@
 
 A complete ModSecurity rule engine written in Rust with zero C/C++ dependencies. Load and execute OWASP Core Rule Set (CRS) rules for web application firewall (WAF) functionality in any Rust application.
 
-## Performance: 4-13x Faster than libmodsecurity
+## Performance: 4-11x Faster than libmodsecurity
 
 | Benchmark | zentinel-modsec | libmodsecurity (C++) | Speedup |
 |-----------|-----------------|----------------------|---------|
-| Clean request | 1.20 µs | 5.31 µs | **4.4x faster** |
-| SQLi detection | 1.15 µs | 14.90 µs | **12.9x faster** |
-| Body processing | 1.29 µs | 12.11 µs | **9.4x faster** |
-| Rule parsing (complex) | 2.58 µs | 10.20 µs | **4.0x faster** |
-| **Throughput (clean)** | **797K req/s** | 177K req/s | **4.5x higher** |
-| **Throughput (attack)** | **840K req/s** | 66K req/s | **12.7x higher** |
+| Clean request | 1.34 µs | 5.65 µs | **4.2x faster** |
+| SQLi detection | 1.40 µs | 16.03 µs | **11.5x faster** |
+| Body processing | 1.45 µs | 12.91 µs | **8.9x faster** |
+| Rule parsing (complex) | 2.73 µs | 10.58 µs | **3.9x faster** |
+| **Throughput (clean)** | **676K req/s** | 168K req/s | **4.0x higher** |
+| **Throughput (attack)** | **701K req/s** | 62K req/s | **11.3x higher** |
 
 <sub>Both engines run the same ruleset through request phases 1 and 2 on the same
 machine (Apple M-series, single thread, criterion). Ratios matter more than the
@@ -32,6 +32,8 @@ absolute numbers, which are hardware-dependent. Reproduce with
 > was doing real work in the same comparison, so the ratio was inflated.
 > Reported in [#15](https://github.com/zentinelproxy/zentinel-modsec/issues/15)
 > and corrected in the benchmark; these numbers are the re-measurement.
+>
+> Re-measured again after #17 and #18 (SecRuleUpdateTargetById, MULTIPART_PART_HEADERS population and the chain-semantics fix), which add real per-request work: throughput moved from 797K to 676K req/s and the headline from 4-13x to 4-11x.
 
 ## Features
 
@@ -409,7 +411,7 @@ async fn waf_check(
 
 ## Why Pure Rust?
 
-1. **Performance** - 4-13x faster than C++ libmodsecurity, depending on workload
+1. **Performance** - 4-11x faster than C++ libmodsecurity, depending on workload
 2. **Safety** - Memory safety guaranteed, no buffer overflows
 3. **Portability** - Runs anywhere Rust compiles (including WASM)
 4. **Simplicity** - `cargo add zentinel-modsec`, no system dependencies
@@ -449,7 +451,7 @@ let modsec = zentinel_modsec::ModSecurity::from_file("/etc/modsecurity/main.conf
 |---------|-----------------|----------------|--------------|
 | Language | Pure Rust | C++ | C |
 | Dependencies | None | PCRE, libxml2, etc. | Apache/nginx |
-| Performance | 797K req/s | 177K req/s | ~200K req/s |
+| Performance | 676K req/s | 168K req/s | ~200K req/s |
 | CRS Compatible | ✅ | ✅ | ✅ |
 | WASM Support | ✅ | ❌ | ❌ |
 | Memory Safety | ✅ Guaranteed | ❌ Manual | ❌ Manual |

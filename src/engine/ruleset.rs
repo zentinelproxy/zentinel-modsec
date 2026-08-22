@@ -214,14 +214,15 @@ impl CompiledRuleset {
                     let transformations = extract_transformations(&rule.actions)?;
 
                     let operator_spec = rule.operator.clone();
-                    let operator = compile_operator(&rule.operator)?;
+                    let (operator, operator_negated) =
+                        compile_operator_reporting(&rule.operator, &id)?;
 
                     let compiled = CompiledRule {
                         id,
                         phase,
                         variables: rule.variables,
                         operator,
-                        operator_negated: operator_spec.negated,
+                        operator_negated,
                         operator_spec,
                         transformations,
                         actions: rule.actions,
@@ -419,6 +420,50 @@ fn variable_matches_target(var: &VariableSpec, target: &str) -> bool {
     }
 }
 
+
+/// Compile a rule's operator, reporting an unusable `@rx` pattern rather than
+/// failing the whole load.
+///
+/// An invalid regex used to be discovered lazily at match time and swallowed
+/// into a no-match, so the rule was dead and nothing said so. Rejecting the
+/// pattern outright would fix the silence but introduce a worse failure: a
+/// single pattern this engine cannot parse — a PCRE construct the `regex`
+/// crate does not implement, say — would stop the entire ruleset from
+/// loading, and with it the WAF.
+///
+/// So the rule is kept and can never match, exactly as before, but the
+/// operator is told at load time which rule is dead and why. Every other
+/// operator keeps failing the load, as it did before: those arguments come
+/// from the same config the operator is editing, not from a third-party
+/// ruleset.
+fn compile_operator_reporting(
+    spec: &OperatorSpec,
+    rule_id: &Option<String>,
+) -> Result<(Arc<dyn Operator>, bool)> {
+    match compile_operator(spec) {
+        Ok(operator) => Ok((operator, spec.negated)),
+        Err(e) if spec.name == OperatorName::Rx => {
+            tracing::error!(
+                rule_id = %rule_id.as_deref().unwrap_or("(no id)"),
+                pattern = %spec.argument,
+                error = %e,
+                "rule has an invalid @rx pattern and can never match; \
+                 the rest of the ruleset was loaded"
+            );
+            let never = compile_operator(&OperatorSpec {
+                negated: false,
+                name: OperatorName::NoMatch,
+                argument: String::new(),
+            })?;
+            // Negation is dropped deliberately. `!@rx <invalid>` with the
+            // negation preserved would invert "never matches" into "matches
+            // every request", turning a dead rule into one that blocks all
+            // traffic -- far worse than the silence being fixed here.
+            Ok((never, false))
+        }
+        Err(e) => Err(e),
+    }
+}
 
 /// Warn once per distinct unsupported `ctl:` directive found in a ruleset.
 ///

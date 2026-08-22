@@ -284,6 +284,48 @@ fn removing_every_target_leaves_nothing_to_match() {
     assert!(!blocked(rules, "/"));
 }
 
+/// An excluded target is not the same as an absent one, and the difference
+/// matters for negated operators.
+///
+/// A rule whose variable resolves to nothing matches when its operator is
+/// negated -- `!@rx foo` against an absent header is "does not contain foo",
+/// which is true. If exclusion reused that path, `ctl:ruleRemoveTargetById`
+/// against a negated rule would make it *start* blocking: the exact opposite
+/// of what excluding a target means.
+#[test]
+fn excluding_a_target_from_a_negated_rule_does_not_make_it_match() {
+    let rules = "SecRuleEngine On\n\
+         SecAction \"id:1,phase:1,pass,nolog,ctl:ruleRemoveTargetById=2;REQUEST_HEADERS:X-Token\"\n\
+         SecRule REQUEST_HEADERS:X-Token \"!@rx ^expected$\" \"id:2,phase:1,deny\"";
+
+    let msc = engine(rules);
+    let mut tx = msc.new_transaction();
+    tx.process_uri("/", "GET", "HTTP/1.1").unwrap();
+    tx.add_request_header("X-Token", "wrong").unwrap();
+    tx.process_request_headers().unwrap();
+
+    assert!(
+        !tx.has_intervention(),
+        "excluding the only target must silence the rule, not trigger it"
+    );
+}
+
+/// The counterpart, to show the rule is otherwise live: with no exclusion the
+/// same request blocks.
+#[test]
+fn the_negated_rule_blocks_when_its_target_is_not_excluded() {
+    let rules = "SecRuleEngine On\n\
+         SecRule REQUEST_HEADERS:X-Token \"!@rx ^expected$\" \"id:2,phase:1,deny\"";
+
+    let msc = engine(rules);
+    let mut tx = msc.new_transaction();
+    tx.process_uri("/", "GET", "HTTP/1.1").unwrap();
+    tx.add_request_header("X-Token", "wrong").unwrap();
+    tx.process_request_headers().unwrap();
+
+    assert!(tx.has_intervention());
+}
+
 #[test]
 fn remove_target_applies_only_to_the_named_rule() {
     let rules = "SecRuleEngine On\n\

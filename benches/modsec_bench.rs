@@ -80,6 +80,44 @@ const XSS_PAYLOADS: &[&str] = &[
 const BODY_SIZES: &[usize] = &[0, 100, 1_000, 10_000, 100_000];
 
 // ============================================================================
+// Sanity Helpers
+// ============================================================================
+//
+// Phase-2 rules only execute in `process_request_body()`. A benchmark that
+// stops after `process_request_headers()` (phase 1) never evaluates them, so
+// its measured section is an empty hot path (issue #15). Every request-
+// processing benchmark below therefore drives both request phases, and each
+// benchmark first asserts that its ruleset actually fires on attack input and
+// stays quiet on clean input, so this cannot silently regress.
+
+/// Run a request through phases 1 and 2 and report whether it was blocked.
+fn full_request(modsec: &ModSecurity, uri: &str, method: &str) -> bool {
+    let mut tx = modsec.new_transaction();
+    tx.process_uri(uri, method, "HTTP/1.1").unwrap();
+    tx.add_request_header("Host", "example.com").unwrap();
+    tx.process_request_headers().unwrap();
+    tx.process_request_body().unwrap();
+    tx.intervention().is_some()
+}
+
+/// Assert that every attack payload is blocked and every clean request passes.
+fn assert_rules_fire(modsec: &ModSecurity) {
+    for &uri in SQLI_PAYLOADS.iter().chain(XSS_PAYLOADS) {
+        assert!(
+            full_request(modsec, uri, "GET"),
+            "benchmark sanity check failed: attack payload not blocked \
+             (are the measured phases still executing the rules?): {uri}"
+        );
+    }
+    for &(uri, method) in CLEAN_REQUESTS {
+        assert!(
+            !full_request(modsec, uri, method),
+            "benchmark sanity check failed: clean request was blocked: {uri}"
+        );
+    }
+}
+
+// ============================================================================
 // Benchmark: Rule Parsing
 // ============================================================================
 
@@ -165,9 +203,22 @@ fn bench_crs_parsing(c: &mut Criterion) {
 fn bench_transaction_processing(c: &mut Criterion) {
     let modsec = ModSecurity::from_string(COMPLEX_RULE).unwrap();
 
+    // COMPLEX_RULE's detection rule (id 942101) is a phase-2 rule matching
+    // union/select/insert patterns, so the attack URI must contain one of
+    // those and the benchmark must run phase 2 for it to execute.
+    let attack_uri = "/api/users?id=1 UNION SELECT * FROM passwords--";
+    assert!(
+        full_request(&modsec, attack_uri, "GET"),
+        "benchmark sanity check failed: COMPLEX_RULE did not block {attack_uri}"
+    );
+    assert!(
+        !full_request(&modsec, "/api/users", "GET"),
+        "benchmark sanity check failed: COMPLEX_RULE blocked a clean request"
+    );
+
     let mut group = c.benchmark_group("transaction");
 
-    // Benchmark clean request processing
+    // Benchmark clean request processing (phases 1 and 2)
     group.bench_function("clean_request", |b| {
         b.iter(|| {
             let mut tx = modsec.new_transaction();
@@ -175,20 +226,20 @@ fn bench_transaction_processing(c: &mut Criterion) {
             tx.add_request_header("Host", "example.com").unwrap();
             tx.add_request_header("User-Agent", "Mozilla/5.0").unwrap();
             tx.process_request_headers().unwrap();
-            let blocked = tx.intervention().is_some();
-            blocked
+            tx.process_request_body().unwrap();
+            tx.intervention().is_some()
         })
     });
 
-    // Benchmark attack request processing
+    // Benchmark attack request processing (phases 1 and 2)
     group.bench_function("sqli_request", |b| {
         b.iter(|| {
             let mut tx = modsec.new_transaction();
-            tx.process_uri(black_box("/api/users?id=1' OR '1'='1"), "GET", "HTTP/1.1").unwrap();
+            tx.process_uri(black_box(attack_uri), "GET", "HTTP/1.1").unwrap();
             tx.add_request_header("Host", "example.com").unwrap();
             tx.process_request_headers().unwrap();
-            let blocked = tx.intervention().is_some();
-            blocked
+            tx.process_request_body().unwrap();
+            tx.intervention().is_some()
         })
     });
 
@@ -197,6 +248,20 @@ fn bench_transaction_processing(c: &mut Criterion) {
 
 fn bench_body_processing(c: &mut Criterion) {
     let modsec = ModSecurity::from_string(SQLI_RULE).unwrap();
+
+    // Sanity: the SQLi body below must actually trigger the phase-2 rule.
+    {
+        let mut tx = modsec.new_transaction();
+        tx.process_uri("/api/login", "POST", "HTTP/1.1").unwrap();
+        tx.add_request_header("Content-Type", "application/x-www-form-urlencoded").unwrap();
+        tx.process_request_headers().unwrap();
+        tx.append_request_body(b"username=admin&password=' OR '1'='1' --").unwrap();
+        tx.process_request_body().unwrap();
+        assert!(
+            tx.intervention().is_some(),
+            "benchmark sanity check failed: SQLi body was not blocked"
+        );
+    }
 
     let mut group = c.benchmark_group("body_processing");
 
@@ -216,8 +281,7 @@ fn bench_body_processing(c: &mut Criterion) {
                     tx.process_request_headers().unwrap();
                     tx.append_request_body(black_box(body.as_bytes())).unwrap();
                     tx.process_request_body().unwrap();
-                    let blocked = tx.intervention().is_some();
-                    blocked
+                    tx.intervention().is_some()
                 })
             },
         );
@@ -234,8 +298,7 @@ fn bench_body_processing(c: &mut Criterion) {
             tx.process_request_headers().unwrap();
             tx.append_request_body(black_box(attack_body.as_bytes())).unwrap();
             tx.process_request_body().unwrap();
-            let blocked = tx.intervention().is_some();
-            blocked
+            tx.intervention().is_some()
         })
     });
 
@@ -362,10 +425,16 @@ SecRule REQUEST_URI "@contains /admin" "id:1,phase:1,deny"
 "#;
     let modsec = ModSecurity::from_string(rules).unwrap();
 
+    // The detection rules above are phase-2 rules: they only execute in
+    // process_request_body(). Verify they actually fire before measuring,
+    // so the benchmark can never silently measure an empty hot path again
+    // (issue #15).
+    assert_rules_fire(&modsec);
+
     let mut group = c.benchmark_group("throughput");
     group.throughput(Throughput::Elements(1));
 
-    // Clean traffic throughput
+    // Clean traffic throughput (phases 1 and 2)
     group.bench_function("clean_traffic", |b| {
         let mut idx = 0;
         b.iter(|| {
@@ -377,12 +446,12 @@ SecRule REQUEST_URI "@contains /admin" "id:1,phase:1,deny"
             tx.add_request_header("Host", "example.com").unwrap();
             tx.add_request_header("User-Agent", "Mozilla/5.0").unwrap();
             tx.process_request_headers().unwrap();
-            let blocked = tx.intervention().is_some();
-            blocked
+            tx.process_request_body().unwrap();
+            tx.intervention().is_some()
         })
     });
 
-    // Attack traffic throughput
+    // Attack traffic throughput (phases 1 and 2)
     group.bench_function("attack_traffic", |b| {
         let mut idx = 0;
         b.iter(|| {
@@ -393,12 +462,12 @@ SecRule REQUEST_URI "@contains /admin" "id:1,phase:1,deny"
             tx.process_uri(black_box(uri), "GET", "HTTP/1.1").unwrap();
             tx.add_request_header("Host", "example.com").unwrap();
             tx.process_request_headers().unwrap();
-            let blocked = tx.intervention().is_some();
-            blocked
+            tx.process_request_body().unwrap();
+            tx.intervention().is_some()
         })
     });
 
-    // Mixed traffic (80% clean, 20% attack)
+    // Mixed traffic (80% clean, 20% attack; phases 1 and 2)
     group.bench_function("mixed_traffic", |b| {
         let mut idx = 0;
         b.iter(|| {
@@ -413,8 +482,8 @@ SecRule REQUEST_URI "@contains /admin" "id:1,phase:1,deny"
             tx.process_uri(black_box(uri), "GET", "HTTP/1.1").unwrap();
             tx.add_request_header("Host", "example.com").unwrap();
             tx.process_request_headers().unwrap();
-            let blocked = tx.intervention().is_some();
-            blocked
+            tx.process_request_body().unwrap();
+            tx.intervention().is_some()
         })
     });
 

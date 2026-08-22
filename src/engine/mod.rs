@@ -1,12 +1,14 @@
 //! Transaction engine for ModSecurity rule processing.
 
 pub mod chain;
+pub mod control;
 pub mod intervention;
 pub mod phase;
 pub mod ruleset;
 pub mod scoring;
 pub mod transaction;
 
+pub use control::{CtlDirective, TransactionControls};
 pub use intervention::Intervention;
 pub use ruleset::{CompiledRuleset, Rules};
 pub use transaction::Transaction;

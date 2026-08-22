@@ -152,6 +152,15 @@ impl CompiledRuleset {
         let mut ruleset = Self::new();
         let mut pending_chain: Option<(Phase, usize)> = None;
 
+        // Report ctl: directives this engine cannot honour, once, at load time.
+        //
+        // This is a warning rather than an error on purpose: CRS ships
+        // ctl:requestBodyProcessor=JSON and ctl:auditLogParts, so rejecting
+        // them would make CRS unloadable. But an operator has to be told at
+        // startup, because the alternative -- finding out from a rule that
+        // never fired -- is the failure this reporting exists to prevent.
+        report_unsupported_controls(&directives);
+
         // SecRuleRemoveById and SecRuleUpdateTargetById are applied against
         // the whole ruleset once loading completes (like ModSecurity, where
         // they modify already-defined rules). Removals are collected up front
@@ -410,6 +419,42 @@ fn variable_matches_target(var: &VariableSpec, target: &str) -> bool {
     }
 }
 
+
+/// Warn once per distinct unsupported `ctl:` directive found in a ruleset.
+///
+/// Deduplicated by `directive=value`: CRS applies the same `ctl:` to hundreds
+/// of rules, and one line per rule would bury the message it is trying to
+/// deliver.
+fn report_unsupported_controls(directives: &[Directive]) {
+    let mut seen: std::collections::BTreeMap<String, (&'static str, usize)> =
+        std::collections::BTreeMap::new();
+
+    for directive in directives {
+        let actions = match directive {
+            Directive::SecRule(rule) => &rule.actions,
+            Directive::SecAction(action) => &action.actions,
+            _ => continue,
+        };
+        for (name, value, reason) in super::control::unsupported_controls(actions) {
+            let key = if value.is_empty() {
+                name
+            } else {
+                format!("{name}={value}")
+            };
+            let entry = seen.entry(key).or_insert((reason, 0));
+            entry.1 += 1;
+        }
+    }
+
+    for (spec, (reason, count)) in seen {
+        tracing::warn!(
+            directive = %spec,
+            rules_affected = count,
+            reason = %reason,
+            "ctl: directive is not implemented and will have no effect"
+        );
+    }
+}
 
 fn extract_id(actions: &[Action]) -> Option<String> {
     for action in actions {

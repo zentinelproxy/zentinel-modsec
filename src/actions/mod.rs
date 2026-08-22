@@ -10,7 +10,7 @@ pub use flow::*;
 pub use data::*;
 pub use metadata::*;
 
-use crate::parser::{Action, DisruptiveAction, FlowAction, DataAction, MetadataAction, LoggingAction, SetVarValue};
+use crate::parser::{Action, ControlAction, DisruptiveAction, FlowAction, DataAction, MetadataAction, LoggingAction, SetVarValue};
 
 /// Result of action execution.
 #[derive(Debug, Clone)]
@@ -25,6 +25,11 @@ pub struct ActionResult {
     pub captures: Vec<String>,
     /// Metadata collected.
     pub metadata: RuleMetadata,
+    /// `ctl:` directives to apply to the transaction.
+    ///
+    /// Collected rather than applied here: they change engine state that lives
+    /// on the transaction, which this function has no access to.
+    pub control_ops: Vec<ControlAction>,
 }
 
 impl Default for ActionResult {
@@ -35,6 +40,7 @@ impl Default for ActionResult {
             setvar_ops: Vec::new(),
             captures: Vec::new(),
             metadata: RuleMetadata::default(),
+            control_ops: Vec::new(),
         }
     }
 }
@@ -144,8 +150,10 @@ pub fn execute_actions(
             Action::Logging(l) => {
                 execute_logging(l, &mut result.metadata);
             }
-            Action::Control(_) => {
-                // Control actions (ctl:) modify engine behavior, handled elsewhere
+            Action::Control(ctl) => {
+                // Applied by the transaction after this returns: ctl: changes
+                // per-transaction state, which is not reachable from here.
+                result.control_ops.push(ctl.clone());
             }
             Action::Transformation(_) => {
                 // Transformations are applied during variable resolution, not execution

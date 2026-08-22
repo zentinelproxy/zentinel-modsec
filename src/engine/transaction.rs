@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use super::chain::ChainState;
+use super::control::{CtlDirective, TransactionControls};
 use super::intervention::Intervention;
 use super::phase::Phase;
 use super::ruleset::{CompiledRule, CompiledRuleset, RuleEngineMode};
@@ -41,6 +42,8 @@ pub struct Transaction {
     matched_vars: Vec<(String, String)>,
     /// Regex captures from last match.
     captures: Vec<String>,
+    /// Per-transaction `ctl:` overrides.
+    controls: TransactionControls,
 }
 
 impl Transaction {
@@ -59,6 +62,7 @@ impl Transaction {
             allowed: false,
             matched_vars: Vec::new(),
             captures: Vec::new(),
+            controls: TransactionControls::default(),
         }
     }
 
@@ -102,6 +106,40 @@ impl Transaction {
             .as_deref()
             .map(|ct| ct.trim_start().to_ascii_lowercase())
             .unwrap_or_default();
+
+        // ctl:requestBodyAccess=Off, typically set in phase 1, suppresses body
+        // parsing entirely. Phase 2 rules still run; they just find no ARGS_POST
+        // or FILES, which is what disabling body access means.
+        if !self.controls.request_body_access() {
+            self.run_phase(Phase::RequestBody)?;
+            return Ok(());
+        }
+
+        // ctl:requestBodyProcessor overrides Content-Type sniffing. CRS relies
+        // on this to force a processor when the header is absent or lying.
+        if let Some(forced) = self.controls.request_body_processor() {
+            match forced {
+                "MULTIPART" => {
+                    if !self
+                        .request
+                        .parse_multipart_body(content_type.as_deref().unwrap_or_default())
+                    {
+                        tracing::warn!(
+                            "ctl:requestBodyProcessor=MULTIPART, but the body has no parseable \
+                             boundary; body arguments were not extracted"
+                        );
+                    }
+                }
+                "URLENCODED" => {
+                    self.request.parse_form_body();
+                    self.request.body_processor = "URLENCODED".to_string();
+                }
+                // CtlDirective::parse admits no other value.
+                other => debug_assert!(false, "unsupported forced body processor: {other}"),
+            }
+            self.run_phase(Phase::RequestBody)?;
+            return Ok(());
+        }
 
         if ct_lower.starts_with("multipart/form-data") {
             // Multipart body processor: populates ARGS_POST, FILES and
@@ -190,13 +228,25 @@ impl Transaction {
         &mut self.tx
     }
 
+    /// The engine mode in force for this transaction.
+    ///
+    /// `ctl:ruleEngine` overrides the ruleset's configured mode for the
+    /// remainder of the transaction; with no override this is the ruleset's
+    /// own mode.
+    fn engine_mode(&self) -> RuleEngineMode {
+        self.controls.engine_mode(self.ruleset.engine_mode())
+    }
+
     /// Run rules for a specific phase.
     fn run_phase(&mut self, phase: Phase) -> Result<()> {
         if self.allowed || self.intervention.is_some() {
             return Ok(());
         }
 
-        if self.ruleset.engine_mode() == RuleEngineMode::Off {
+        // ctl:ruleEngine overrides the ruleset's mode for this transaction, so
+        // the effective mode has to be re-read rather than captured once: a
+        // rule in an earlier phase may have switched it off.
+        if self.engine_mode() == RuleEngineMode::Off {
             return Ok(());
         }
 
@@ -236,7 +286,30 @@ impl Transaction {
                 continue;
             }
 
+            // A ctl:ruleEngine=Off from an earlier rule stops this phase where
+            // it stands, rather than only taking effect from the next phase.
+            if self.engine_mode() == RuleEngineMode::Off {
+                return Ok(());
+            }
+
             let rule = &rules[idx];
+
+            // ctl:ruleRemoveById excluded this rule for this transaction. Skip
+            // it as though it were not in the ruleset -- including its chain
+            // links, which cannot fire without their starter.
+            if self.controls.is_rule_removed(rule.id.as_deref()) {
+                if rule.is_chain {
+                    chain_state.reset();
+                    pending_chain_actions = None;
+                    idx += 1;
+                    while idx < rules.len() && rules[idx - 1].is_chain {
+                        idx += 1;
+                    }
+                    continue;
+                }
+                idx += 1;
+                continue;
+            }
 
             // Handle chain continuation
             if chain_state.in_chain && !rule.is_chain && rule.chain_next.is_none() {
@@ -288,6 +361,13 @@ impl Transaction {
                     self.apply_setvar(op);
                 }
 
+                // Apply ctl: overrides before the disruptive action below, so
+                // that ctl:ruleEngine=DetectionOnly on the same rule governs
+                // whether that rule blocks.
+                for ctl in &action_result.control_ops {
+                    self.controls.apply(CtlDirective::parse(ctl));
+                }
+
                 // Handle flow control
                 match action_result.flow {
                     FlowOutcome::Chain => {
@@ -308,7 +388,7 @@ impl Transaction {
                 // Handle disruptive action
                 if let Some(outcome) = action_result.disruptive {
                     // Only apply if not in detection-only mode
-                    let should_block = self.ruleset.engine_mode() == RuleEngineMode::On;
+                    let should_block = self.engine_mode() == RuleEngineMode::On;
 
                     match outcome {
                         DisruptiveOutcome::Deny(status) => {
@@ -401,14 +481,35 @@ impl Transaction {
         // and is what CRS's `SecRule &TX:x "@eq 0"` initialization relies on.
         // Emitting a value even for an absent count also keeps the spec out of
         // the "resolved to nothing" early-return below, so `&x "@eq 0"` matches.
+        // ctl:ruleRemoveTargetById drops individual targets from this rule for
+        // this transaction. The check is hoisted so rules with no exclusion --
+        // effectively all of them -- pay one comparison rather than a scan per
+        // variable.
+        let filter_targets = self.controls.has_target_removals(rule.id.as_deref());
+
         let mut all_values = Vec::new();
+        let mut any_excluded = false;
+        let mut kept_specs = 0usize;
         for spec in &rule.variables {
+            if filter_targets && self.controls.is_target_removed(rule.id.as_deref(), spec) {
+                any_excluded = true;
+                continue;
+            }
+            kept_specs += 1;
             let resolved = resolver.resolve(spec);
             if spec.count_mode {
                 all_values.push((format!("&{:?}", spec.name), resolved.len().to_string()));
             } else {
                 all_values.extend(resolved);
             }
+        }
+
+        // Every target was excluded, so there is nothing left to test. Return
+        // before the branch below: a rule stripped down to no targets is not
+        // the same as a SecAction with no targets, and running the operator
+        // unconditionally could match.
+        if any_excluded && kept_specs == 0 {
+            return Ok((false, Vec::new()));
         }
 
         if all_values.is_empty() {

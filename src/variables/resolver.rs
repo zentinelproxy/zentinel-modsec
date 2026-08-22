@@ -152,6 +152,30 @@ impl<'a> VariableResolver<'a> {
                 }
             }
 
+            // A body the processor could not handle. These resolved to nothing
+            // before, so CRS rule 200002 (`SecRule REQBODY_ERROR "!@eq 0"`)
+            // could never fire and a rejected body passed unexamined and
+            // unreported.
+            //
+            // REQBODY_ERROR always has a value -- "0" when the body processed
+            // cleanly -- because a rule comparing it against 0 must be able to
+            // find it. REQBODY_ERROR_MSG is absent unless there is a message,
+            // matching ModSecurity.
+            VariableName::ReqBodyError | VariableName::ReqBodyProcessorError => {
+                let flag = if self.request.body_error.is_some() {
+                    "1"
+                } else {
+                    "0"
+                };
+                vec![("REQBODY_ERROR".to_string(), flag.to_string())]
+            }
+            VariableName::ReqBodyErrorMsg | VariableName::ReqBodyProcessorErrorMsg => {
+                match &self.request.body_error {
+                    Some(msg) => vec![("REQBODY_ERROR_MSG".to_string(), msg.clone())],
+                    None => vec![],
+                }
+            }
+
             // Response variables
             VariableName::ResponseStatus => {
                 vec![(

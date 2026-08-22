@@ -16,9 +16,10 @@
 //! the subset that is not implemented would defeat the point.
 //!
 //! Reporting is a warning rather than a hard error because CRS ships
-//! `ctl:requestBodyProcessor=JSON` and `ctl:auditLogParts`: rejecting those
-//! would make CRS unloadable, which is a worse outcome than running it with a
-//! known and stated gap.
+//! directives this engine does not implement (`ctl:auditLogParts`, and
+//! `ctl:requestBodyProcessor=XML`): rejecting those would make CRS
+//! unloadable, which is a worse outcome than running it with a known and
+//! stated gap.
 
 use std::collections::HashSet;
 
@@ -63,7 +64,7 @@ pub enum CtlDirective {
     },
     /// `ctl:requestBodyAccess=On|Off`
     RequestBodyAccess(bool),
-    /// `ctl:requestBodyProcessor=URLENCODED|MULTIPART`
+    /// `ctl:requestBodyProcessor=URLENCODED|MULTIPART|JSON`
     RequestBodyProcessor(String),
     /// A directive this engine does not implement.
     ///
@@ -80,11 +81,9 @@ pub enum CtlDirective {
 
 /// Body processors this engine can actually run.
 ///
-/// `JSON` and `XML` are deliberately absent: no parser for either exists yet,
-/// so accepting them would leave request bodies unexamined while the config
-/// claims otherwise. CRS sets `ctl:requestBodyProcessor=JSON` from
-/// `Content-Type` in phase 1, so this is a real gap, not a hypothetical one.
-const SUPPORTED_BODY_PROCESSORS: &[&str] = &["URLENCODED", "MULTIPART"];
+/// `XML` is deliberately absent: no parser exists yet, so accepting it would
+/// leave request bodies unexamined while the config claims otherwise.
+const SUPPORTED_BODY_PROCESSORS: &[&str] = &["URLENCODED", "MULTIPART", "JSON"];
 
 impl CtlDirective {
     /// Interpret a parsed `ctl:` action.
@@ -150,8 +149,8 @@ impl CtlDirective {
                     CtlDirective::unsupported(
                         directive,
                         value,
-                        "this engine implements only the URLENCODED and MULTIPART body \
-                         processors; JSON and XML bodies would go unexamined",
+                        "this engine implements the URLENCODED, MULTIPART and JSON body \
+                         processors; XML bodies would go unexamined",
                     )
                 }
             }
@@ -210,8 +209,12 @@ fn parse_id_ranges(value: &str) -> Option<Vec<RuleIdRange>> {
 pub struct TransactionControls {
     engine_mode: Option<RuleEngineMode>,
     removed_rules: Vec<RuleIdRange>,
-    /// `(rule id, target)` pairs from `ctl:ruleRemoveTargetById`.
-    removed_targets: Vec<(String, String)>,
+    /// `(rule id, parsed target)` pairs from `ctl:ruleRemoveTargetById`.
+    ///
+    /// The target is parsed once when the directive fires rather than once per
+    /// resolved value: a rule over a large collection would otherwise re-parse
+    /// the same string thousands of times.
+    removed_targets: Vec<(String, VariableSpec)>,
     request_body_access: Option<bool>,
     request_body_processor: Option<String>,
     /// Unsupported directives already reported, so a rule that fires on every
@@ -230,7 +233,22 @@ impl TransactionControls {
             CtlDirective::RuleEngine(mode) => self.engine_mode = Some(mode),
             CtlDirective::RuleRemoveById(mut ranges) => self.removed_rules.append(&mut ranges),
             CtlDirective::RuleRemoveTargetById { rule_id, target } => {
-                self.removed_targets.push((rule_id, target))
+                // Parse with the same parser used for rule variables so
+                // collection names round-trip: SecLang writes REQUEST_HEADERS
+                // where the enum variant renders as RequestHeaders.
+                match crate::parser::parse_single_variable(&target) {
+                    Ok(spec) => self.removed_targets.push((rule_id, spec)),
+                    Err(_) => {
+                        let key = format!("ruleRemoveTargetById={rule_id};{target}");
+                        if self.reported.insert(key) {
+                            tracing::warn!(
+                                rule_id = %rule_id,
+                                target = %target,
+                                "ignoring ctl:ruleRemoveTargetById with an unparseable target"
+                            );
+                        }
+                    }
+                }
             }
             CtlDirective::RequestBodyAccess(on) => self.request_body_access = Some(on),
             CtlDirective::RequestBodyProcessor(p) => self.request_body_processor = Some(p),
@@ -282,15 +300,36 @@ impl TransactionControls {
         }
     }
 
-    /// Whether this variable was excluded from this rule by
+    /// Whether one resolved value was excluded from this rule by
     /// `ctl:ruleRemoveTargetById`.
-    pub fn is_target_removed(&self, rule_id: Option<&str>, var: &VariableSpec) -> bool {
+    ///
+    /// Exclusion filters *values*, not variable specifications, because the
+    /// shape CRS actually uses is a rule targeting a whole collection with an
+    /// exclusion naming one member:
+    ///
+    /// ```text
+    /// SecRule ARGS "@detectSQLi" "id:942100,..."
+    /// ctl:ruleRemoveTargetById=942100;ARGS:json.token
+    /// ```
+    ///
+    /// Dropping the spec would remove `ARGS` entirely and disable the rule;
+    /// leaving it would exclude nothing. Only removing the one resolved value
+    /// named `ARGS:json.token` does what the operator asked.
+    ///
+    /// `resolved_name` is the name the resolver produced, in `COLLECTION:key`
+    /// form for collections and a bare name otherwise.
+    pub fn is_target_removed(
+        &self,
+        rule_id: Option<&str>,
+        var: &VariableSpec,
+        resolved_name: &str,
+    ) -> bool {
         let Some(id) = rule_id else {
             return false;
         };
         self.removed_targets
             .iter()
-            .any(|(r, target)| r == id && variable_matches_target(var, target))
+            .any(|(r, target)| r == id && target_matches_resolved(var, target, resolved_name))
     }
 
     /// Whether the request body should be parsed at all.
@@ -304,29 +343,50 @@ impl TransactionControls {
     }
 }
 
-/// Whether a rule variable refers to the target named by a `ctl:` argument
+/// Whether a resolved value falls under the target named by a `ctl:` argument
 /// such as `ARGS:bar` or `REQUEST_HEADERS`.
 ///
-/// Parses the target with the same parser used for rule variables so
+/// The target is parsed with the same parser used for rule variables so
 /// collection names round-trip: SecLang writes `REQUEST_HEADERS` where the
 /// enum variant renders as `RequestHeaders`, and comparing rendered names
 /// would silently never match.
-fn variable_matches_target(var: &VariableSpec, target: &str) -> bool {
-    let Ok(parsed) = crate::parser::parse_single_variable(target) else {
-        return false;
-    };
-    if var.name != parsed.name {
+fn target_matches_resolved(var: &VariableSpec, target: &VariableSpec, resolved_name: &str) -> bool {
+    if var.name != target.name {
         return false;
     }
-    match (&var.selection, &parsed.selection) {
-        (None, None) => true,
-        (Some(Selection::Key(existing)), Some(Selection::Key(wanted))) => {
-            existing.eq_ignore_ascii_case(wanted.as_str())
+
+    match &target.selection {
+        // `ctl:...=ID;ARGS` excludes the whole collection from this rule.
+        None => true,
+        Some(Selection::Key(wanted)) => {
+            // The resolver names collection members `COLLECTION:key`. A bare
+            // name means a scalar variable, which a keyed target cannot select.
+            let Some((_, key)) = resolved_name.split_once(':') else {
+                return false;
+            };
+            if header_keys_are_case_insensitive(var) {
+                key.eq_ignore_ascii_case(wanted.as_str())
+            } else {
+                key == wanted.as_str()
+            }
         }
-        // A rule targeting the whole collection is not excluded by a directive
-        // naming one key, and vice versa.
-        _ => false,
+        // A regex selection in a ctl: target is not something ModSecurity
+        // accepts here; refuse rather than guess.
+        Some(Selection::Regex(_)) => false,
     }
+}
+
+/// Whether member keys of this variable's collection compare case-insensitively.
+///
+/// Only the HTTP header collections do — the resolver looks those up with a
+/// lowercased key. Argument names are case-sensitive in ModSecurity, and
+/// matching them loosely would silently widen an exclusion beyond what the
+/// operator wrote.
+fn header_keys_are_case_insensitive(var: &VariableSpec) -> bool {
+    matches!(
+        var.name,
+        crate::parser::VariableName::RequestHeaders | crate::parser::VariableName::ResponseHeaders
+    )
 }
 
 /// Collect the unsupported `ctl:` directives in a set of actions.
@@ -497,28 +557,79 @@ mod tests {
         )));
 
         let var = crate::parser::parse_single_variable("REQUEST_HEADERS:User-Agent").unwrap();
-        assert!(controls.is_target_removed(Some("1"), &var));
+        assert!(controls.is_target_removed(Some("1"), &var, "REQUEST_HEADERS:User-Agent"));
         // Same target, different rule.
-        assert!(!controls.is_target_removed(Some("2"), &var));
+        assert!(!controls.is_target_removed(Some("2"), &var, "REQUEST_HEADERS:User-Agent"));
 
         let other = crate::parser::parse_single_variable("REQUEST_HEADERS:Referer").unwrap();
-        assert!(!controls.is_target_removed(Some("1"), &other));
+        assert!(!controls.is_target_removed(Some("1"), &other, "REQUEST_HEADERS:Referer"));
 
         // Header keys are case insensitive.
-        let cased = crate::parser::parse_single_variable("REQUEST_HEADERS:user-agent").unwrap();
-        assert!(controls.is_target_removed(Some("1"), &cased));
+        assert!(controls.is_target_removed(Some("1"), &var, "REQUEST_HEADERS:user-agent"));
+    }
+
+    /// The shape CRS actually uses: the rule targets a whole collection and
+    /// the exclusion names one member. Matching on the specification alone
+    /// cannot express this -- the spec is `ARGS` either way -- so the resolved
+    /// value name is what decides.
+    #[test]
+    fn a_keyed_target_excludes_one_member_of_a_collection_rule() {
+        let mut controls = TransactionControls::default();
+        controls.apply(CtlDirective::parse(&ctl(
+            "ruleRemoveTargetById",
+            "942100;ARGS:json.token",
+        )));
+
+        let whole_args = crate::parser::parse_single_variable("ARGS").unwrap();
+        assert!(controls.is_target_removed(Some("942100"), &whole_args, "ARGS:json.token"));
+        assert!(!controls.is_target_removed(Some("942100"), &whole_args, "ARGS:json.query"));
+    }
+
+    /// Argument names are case sensitive in ModSecurity, unlike header names.
+    /// Matching them loosely would widen an exclusion past what was written.
+    #[test]
+    fn argument_keys_are_matched_case_sensitively() {
+        let mut controls = TransactionControls::default();
+        controls.apply(CtlDirective::parse(&ctl(
+            "ruleRemoveTargetById",
+            "1;ARGS:Token",
+        )));
+
+        let args = crate::parser::parse_single_variable("ARGS").unwrap();
+        assert!(controls.is_target_removed(Some("1"), &args, "ARGS:Token"));
+        assert!(!controls.is_target_removed(Some("1"), &args, "ARGS:token"));
+    }
+
+    /// A keyed target cannot select a scalar variable, which has no members.
+    #[test]
+    fn a_keyed_target_does_not_match_a_scalar_variable() {
+        let mut controls = TransactionControls::default();
+        controls.apply(CtlDirective::parse(&ctl(
+            "ruleRemoveTargetById",
+            "1;REQUEST_URI:x",
+        )));
+
+        let uri = crate::parser::parse_single_variable("REQUEST_URI").unwrap();
+        assert!(!controls.is_target_removed(Some("1"), &uri, "REQUEST_URI"));
     }
 
     #[test]
-    fn a_whole_collection_target_does_not_match_a_keyed_variable() {
+    fn an_unkeyed_target_excludes_the_whole_collection() {
         let mut controls = TransactionControls::default();
         controls.apply(CtlDirective::parse(&ctl("ruleRemoveTargetById", "1;ARGS")));
 
-        let keyed = crate::parser::parse_single_variable("ARGS:token").unwrap();
-        assert!(!controls.is_target_removed(Some("1"), &keyed));
-
+        // Naming the collection with no key excludes every member of it, for
+        // a rule targeting the collection or any single member.
         let whole = crate::parser::parse_single_variable("ARGS").unwrap();
-        assert!(controls.is_target_removed(Some("1"), &whole));
+        assert!(controls.is_target_removed(Some("1"), &whole, "ARGS:token"));
+        assert!(controls.is_target_removed(Some("1"), &whole, "ARGS:anything"));
+
+        let keyed = crate::parser::parse_single_variable("ARGS:token").unwrap();
+        assert!(controls.is_target_removed(Some("1"), &keyed, "ARGS:token"));
+
+        // A different collection is untouched.
+        let cookies = crate::parser::parse_single_variable("REQUEST_COOKIES").unwrap();
+        assert!(!controls.is_target_removed(Some("1"), &cookies, "REQUEST_COOKIES:token"));
     }
 
     #[test]
@@ -526,7 +637,6 @@ mod tests {
         // The whole point: a directive this engine cannot honour must not look
         // like it worked.
         for (directive, value) in [
-            ("requestBodyProcessor", "JSON"),
             ("requestBodyProcessor", "XML"),
             ("auditEngine", "Off"),
             ("auditLogParts", "+E"),
@@ -544,7 +654,7 @@ mod tests {
 
     #[test]
     fn implemented_body_processors_are_accepted() {
-        for value in ["URLENCODED", "urlencoded", "MULTIPART"] {
+        for value in ["URLENCODED", "urlencoded", "MULTIPART", "JSON", "json"] {
             assert!(
                 matches!(
                     CtlDirective::parse(&ctl("requestBodyProcessor", value)),

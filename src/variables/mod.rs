@@ -3,6 +3,7 @@
 //! This module handles variable resolution and collection management.
 
 mod collection;
+mod json;
 mod request;
 mod response;
 mod tx;

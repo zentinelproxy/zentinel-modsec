@@ -16,6 +16,18 @@ use crate::operators::{compile_operator, Operator};
 use crate::parser::OperatorSpec;
 use crate::variables::{Collection, RequestData, ResponseData, TxCollection, VariableResolver};
 
+/// Whether a lowercased Content-Type denotes a JSON body.
+///
+/// Covers the `+json` structured suffix (RFC 6839) as well as `application/json`,
+/// so `application/vnd.api+json`, `application/problem+json` and friends are
+/// inspected rather than silently falling through to the urlencoded parser.
+fn is_json_content_type(ct_lower: &str) -> bool {
+    let media_type = ct_lower.split(';').next().unwrap_or("").trim();
+    media_type == "application/json"
+        || media_type == "text/json"
+        || media_type.ends_with("+json")
+}
+
 /// A ModSecurity transaction for processing a single request.
 pub struct Transaction {
     /// Compiled ruleset reference.
@@ -134,6 +146,7 @@ impl Transaction {
                     self.request.parse_form_body();
                     self.request.body_processor = "URLENCODED".to_string();
                 }
+                "JSON" => self.process_json_body(),
                 // CtlDirective::parse admits no other value.
                 other => debug_assert!(false, "unsupported forced body processor: {other}"),
             }
@@ -154,6 +167,13 @@ impl Transaction {
                      body arguments were not extracted"
                 );
             }
+        } else if is_json_content_type(&ct_lower) {
+            // JSON bodies previously fell through to the urlencoded parser,
+            // which extracts nothing usable from them -- so ARGS was empty and
+            // rules like CRS 942100 (`SecRule ARGS "@detectSQLi"`) had nothing
+            // to inspect. An injection payload was blocked in a form body and
+            // passed unexamined in a JSON body.
+            self.process_json_body();
         } else {
             self.request.parse_form_body();
             if ct_lower.starts_with("application/x-www-form-urlencoded") {
@@ -163,6 +183,21 @@ impl Transaction {
 
         self.run_phase(Phase::RequestBody)?;
         Ok(())
+    }
+
+    /// Run the JSON body processor, recording any failure.
+    ///
+    /// A failure is deliberately not fatal: the request still goes through
+    /// phase 2 so that rules testing `REQBODY_ERROR` can act on it, which is
+    /// how CRS rule 200002 blocks bodies it could not parse. Dropping the
+    /// request here instead would take that decision away from the ruleset.
+    fn process_json_body(&mut self) {
+        if let Err(e) = self.request.parse_json_body() {
+            tracing::debug!(
+                error = %e,
+                "request body could not be processed as JSON; REQBODY_ERROR is set"
+            );
+        }
     }
 
     /// Add a response header.
@@ -489,26 +524,31 @@ impl Transaction {
 
         let mut all_values = Vec::new();
         let mut any_excluded = false;
-        let mut kept_specs = 0usize;
         for spec in &rule.variables {
-            if filter_targets && self.controls.is_target_removed(rule.id.as_deref(), spec) {
-                any_excluded = true;
-                continue;
+            let mut resolved = resolver.resolve(spec);
+            if filter_targets {
+                let before = resolved.len();
+                resolved.retain(|(name, _)| {
+                    !self
+                        .controls
+                        .is_target_removed(rule.id.as_deref(), spec, name)
+                });
+                any_excluded |= resolved.len() != before;
             }
-            kept_specs += 1;
-            let resolved = resolver.resolve(spec);
             if spec.count_mode {
+                // An exclusion reduces the count, which is what a rule like
+                // `SecRule &ARGS:x "@eq 0"` is asking about.
                 all_values.push((format!("&{:?}", spec.name), resolved.len().to_string()));
             } else {
                 all_values.extend(resolved);
             }
         }
 
-        // Every target was excluded, so there is nothing left to test. Return
-        // before the branch below: a rule stripped down to no targets is not
-        // the same as a SecAction with no targets, and running the operator
-        // unconditionally could match.
-        if any_excluded && kept_specs == 0 {
+        // Exclusions removed everything this rule had to test. Return before
+        // the branch below: a rule stripped down to nothing is not the same as
+        // a SecAction with no targets, and running the operator unconditionally
+        // could match.
+        if any_excluded && all_values.is_empty() {
             return Ok((false, Vec::new()));
         }
 

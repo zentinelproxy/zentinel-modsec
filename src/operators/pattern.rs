@@ -10,25 +10,41 @@ use regex::Regex;
 
 /// Regex operator (@rx) with lazy compilation.
 ///
-/// The regex is compiled on first use rather than at parse time,
-/// making rule loading significantly faster.
+/// The pattern's *syntax* is validated when the rule is loaded, but the
+/// automaton is only built on first use — CRS defines hundreds of regex rules
+/// and most requests exercise few of them.
+///
+/// The distinction matters: an invalid pattern must be a load error. If it
+/// were discovered at match time there would be nothing useful to do about it,
+/// and the rule would silently never match — a dead rule that looks alive.
 pub struct RxOperator {
     pattern_str: String,
-    compiled: OnceCell<Regex>,
+    /// `None` once compilation has been attempted and failed, so a pattern
+    /// that passes syntax validation but cannot be built (an oversized
+    /// program, say) is reported once rather than retried per request.
+    compiled: OnceCell<Option<Regex>>,
 }
 
 impl RxOperator {
-    /// Create a new regex operator (lazy compilation).
+    /// Create a new regex operator, validating the pattern's syntax.
     ///
-    /// The pattern is validated but not fully compiled until first use.
+    /// Parsing with `regex-syntax` catches every syntax error the full
+    /// compiler would, without building the automaton, so loading stays fast
+    /// while a malformed pattern fails loudly at load instead of turning into
+    /// a rule that can never match.
     #[inline]
     pub fn new(pattern: &str) -> Result<Self> {
-        // Quick validation check - attempt to parse without full compilation
-        // This catches obvious syntax errors at parse time
         if pattern.is_empty() {
             return Err(Error::RegexCompile {
                 pattern: pattern.to_string(),
                 source: regex::Error::Syntax("empty pattern".to_string()),
+            });
+        }
+
+        if let Err(e) = regex_syntax::Parser::new().parse(pattern) {
+            return Err(Error::RegexCompile {
+                pattern: pattern.to_string(),
+                source: regex::Error::Syntax(e.to_string()),
             });
         }
 
@@ -39,19 +55,33 @@ impl RxOperator {
     }
 
     /// Get or compile the regex pattern.
+    ///
+    /// Returns `None` if compilation failed. Syntax was already validated in
+    /// [`RxOperator::new`], so reaching this is rare — a program too large to
+    /// build, for instance. It is reported once, because a rule that cannot
+    /// match must not do so silently.
     #[inline]
-    fn get_regex(&self) -> std::result::Result<&Regex, regex::Error> {
-        self.compiled.get_or_try_init(|| {
-            Regex::new(&self.pattern_str)
-        })
+    fn get_regex(&self) -> Option<&Regex> {
+        self.compiled
+            .get_or_init(|| match Regex::new(&self.pattern_str) {
+                Ok(regex) => Some(regex),
+                Err(e) => {
+                    tracing::error!(
+                        pattern = %self.pattern_str,
+                        error = %e,
+                        "regex could not be compiled at first use; this rule can never match"
+                    );
+                    None
+                }
+            })
+            .as_ref()
     }
 }
 
 impl Operator for RxOperator {
     fn execute(&self, value: &str) -> OperatorResult {
-        let regex = match self.get_regex() {
-            Ok(r) => r,
-            Err(_) => return OperatorResult::no_match(),
+        let Some(regex) = self.get_regex() else {
+            return OperatorResult::no_match();
         };
 
         if let Some(captures) = regex.captures(value) {

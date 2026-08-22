@@ -212,6 +212,9 @@ impl<'a> VariableResolver<'a> {
             VariableName::ServerName => {
                 vec![("SERVER_NAME".to_string(), self.request.server_name.clone())]
             }
+            VariableName::ServerAddr => {
+                vec![("SERVER_ADDR".to_string(), self.request.server_addr.clone())]
+            }
             VariableName::ServerPort => {
                 vec![(
                     "SERVER_PORT".to_string(),
@@ -231,6 +234,15 @@ impl<'a> VariableResolver<'a> {
                 .matched_vars
                 .iter()
                 .map(|(k, v)| (format!("MATCHED_VARS:{}", k), v.clone()))
+                .collect(),
+            VariableName::MatchedVarName => match self.matched_vars.last() {
+                Some((name, _)) => vec![("MATCHED_VAR_NAME".to_string(), name.clone())],
+                None => vec![],
+            },
+            VariableName::MatchedVarsNames => self
+                .matched_vars
+                .iter()
+                .map(|(k, _)| (format!("MATCHED_VARS_NAMES:{}", k), k.clone()))
                 .collect(),
 
             // Default - empty

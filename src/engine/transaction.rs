@@ -56,6 +56,62 @@ pub struct Transaction {
     captures: Vec<String>,
     /// Per-transaction `ctl:` overrides.
     controls: TransactionControls,
+    /// Every variable that caused a rule to match, in order.
+    ///
+    /// Separate from `matched_vars`, which ModSecurity scopes to the current
+    /// rule so that `MATCHED_VARS` reads correctly. This accumulates for the
+    /// whole transaction, because audit logging wants to answer "what did
+    /// rule 942100 actually see" after the fact.
+    matched_data: Vec<MatchedData>,
+}
+
+/// The variable a rule matched on.
+#[derive(Debug, Clone)]
+struct MatchedVariable {
+    name: String,
+    value: String,
+    portion: Option<String>,
+}
+
+/// Result of evaluating one rule.
+struct RuleOutcome {
+    matched: bool,
+    captures: Vec<String>,
+    matched_variable: Option<MatchedVariable>,
+}
+
+impl RuleOutcome {
+    fn no_match() -> Self {
+        Self {
+            matched: false,
+            captures: Vec::new(),
+            matched_variable: None,
+        }
+    }
+}
+
+/// What a rule matched on.
+///
+/// `matched_rules()` gives rule IDs, which says a rule fired but not why.
+/// Without the variable and value there is no way to tell a true positive
+/// from a false one, or to write a useful audit log entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MatchedData {
+    /// ID of the rule that matched, if it has one.
+    pub rule_id: Option<String>,
+    /// Name of the variable that matched, e.g. `ARGS:json.q`.
+    pub variable: String,
+    /// The variable's value, after transformations were applied.
+    ///
+    /// This is what `MATCHED_VAR` resolves to -- the whole value, not the
+    /// portion the operator hit.
+    pub value: String,
+    /// The portion of the value the operator matched, when it reports one.
+    ///
+    /// `@contains evil` against `something-evil-here` gives `evil` here and
+    /// the full string in `value`. Operators that match the whole value, or
+    /// do not report a portion, leave this `None`.
+    pub matched_portion: Option<String>,
 }
 
 impl Transaction {
@@ -75,7 +131,37 @@ impl Transaction {
             matched_vars: Vec::new(),
             captures: Vec::new(),
             controls: TransactionControls::default(),
+            matched_data: Vec::new(),
         }
+    }
+
+    /// Set the client address, backing `REMOTE_ADDR` and `REMOTE_PORT`.
+    ///
+    /// Without this there is no way for a caller to populate them, so every
+    /// IP-based rule -- `@ipMatch`, CRS IP reputation, allow and deny lists --
+    /// evaluated against an empty string and never matched.
+    pub fn set_client_addr(&mut self, ip: &str, port: u16) {
+        self.request.client_ip = ip.to_string();
+        self.request.client_port = port;
+    }
+
+    /// Set the local address, backing `SERVER_ADDR` and `SERVER_PORT`.
+    pub fn set_server_addr(&mut self, ip: &str, port: u16) {
+        self.request.server_addr = ip.to_string();
+        self.request.server_port = port;
+    }
+
+    /// Set the server name, backing `SERVER_NAME`.
+    pub fn set_server_name(&mut self, name: &str) {
+        self.request.server_name = name.to_string();
+    }
+
+    /// Every variable that caused a rule to match, in order.
+    ///
+    /// Pairs with [`matched_rules`](Self::matched_rules): that says which
+    /// rules fired, this says what they saw.
+    pub fn matched_data(&self) -> &[MatchedData] {
+        &self.matched_data
     }
 
     /// Process the request URI.
@@ -357,7 +443,26 @@ impl Transaction {
             }
 
             // Evaluate rule
-            let (matched, captures) = self.evaluate_rule(rule)?;
+            let outcome = self.evaluate_rule(rule)?;
+            let matched = outcome.matched;
+            let captures = outcome.captures;
+
+            if matched {
+                // MATCHED_VARS is scoped to the current rule in ModSecurity,
+                // so this replaces rather than appends -- otherwise a later
+                // rule would read the previous rule's matches.
+                self.matched_vars.clear();
+                if let Some(ref var) = outcome.matched_variable {
+                    self.matched_vars
+                        .push((var.name.clone(), var.value.clone()));
+                    self.matched_data.push(MatchedData {
+                        rule_id: rule.id.clone(),
+                        variable: var.name.clone(),
+                        value: var.value.clone(),
+                        matched_portion: var.portion.clone(),
+                    });
+                }
+            }
 
             if matched {
                 // Execute actions
@@ -498,12 +603,15 @@ impl Transaction {
     }
 
     /// Evaluate a single rule.
-    fn evaluate_rule(&self, rule: &CompiledRule) -> Result<(bool, Vec<String>)> {
+    fn evaluate_rule(&self, rule: &CompiledRule) -> Result<RuleOutcome> {
         let resolver = VariableResolver::new(
             &self.request,
             &self.response,
             &self.tx,
-            None,
+            // MATCHED_VAR is the value the previous rule matched on. This was
+            // a literal `None`, so a rule reading MATCHED_VAR could never
+            // fire, however many rules had matched before it.
+            self.matched_vars.last().map(|(_, value)| value.as_str()),
             &self.matched_vars,
             &self.captures,
         );
@@ -549,7 +657,7 @@ impl Transaction {
         // a SecAction with no targets, and running the operator unconditionally
         // could match.
         if any_excluded && all_values.is_empty() {
-            return Ok((false, Vec::new()));
+            return Ok(RuleOutcome::no_match());
         }
 
         if all_values.is_empty() {
@@ -558,10 +666,20 @@ impl Transaction {
             if rule.variables.is_empty() {
                 let result = rule.operator.execute("");
                 let matched = if rule.operator_negated { !result.matched } else { result.matched };
-                return Ok((matched, result.captures));
+                // A SecAction has no variable, so there is nothing to report
+                // as the match target.
+                return Ok(RuleOutcome {
+                    matched,
+                    captures: result.captures,
+                    matched_variable: None,
+                });
             }
             // Variables were specified but resolved to nothing (e.g. absent header).
-            return Ok((rule.operator_negated, Vec::new()));
+            return Ok(RuleOutcome {
+                matched: rule.operator_negated,
+                captures: Vec::new(),
+                matched_variable: None,
+            });
         }
 
         // If the operator argument references runtime macros (e.g.
@@ -582,18 +700,31 @@ impl Transaction {
         };
 
         // Apply transformations and match
-        for (_name, value) in all_values {
+        for (name, value) in all_values {
             let transformed = rule.transformations.apply(&value);
             let result = operator.execute(&transformed);
 
             let final_match = if rule.operator_negated { !result.matched } else { result.matched };
 
             if final_match {
-                return Ok((true, result.captures));
+                let matched = MatchedVariable {
+                    name,
+                    // ModSecurity's MATCHED_VAR is the *variable's* value, not
+                    // the portion the operator hit. The portion is reported
+                    // separately, since an audit log wants both: the value to
+                    // judge the match, the portion to see what triggered it.
+                    value: transformed.into_owned(),
+                    portion: result.matched_value,
+                };
+                return Ok(RuleOutcome {
+                    matched: true,
+                    captures: result.captures,
+                    matched_variable: Some(matched),
+                });
             }
         }
 
-        Ok((false, Vec::new()))
+        Ok(RuleOutcome::no_match())
     }
 
     /// Expand `%{...}` macros in an operator argument against current TX state.

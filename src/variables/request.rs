@@ -53,6 +53,8 @@ pub struct RequestData {
     pub client_port: u16,
     /// Server name.
     pub server_name: String,
+    /// Local address the connection was accepted on. Backs `SERVER_ADDR`.
+    pub server_addr: String,
     /// Server port.
     pub server_port: u16,
 }

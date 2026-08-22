@@ -16,10 +16,9 @@
 //! the subset that is not implemented would defeat the point.
 //!
 //! Reporting is a warning rather than a hard error because CRS ships
-//! directives this engine does not implement (`ctl:auditLogParts`, and
-//! `ctl:requestBodyProcessor=XML`): rejecting those would make CRS
-//! unloadable, which is a worse outcome than running it with a known and
-//! stated gap.
+//! directives this engine does not implement, `ctl:auditLogParts` among
+//! them: rejecting those would make CRS unloadable, which is a worse
+//! outcome than running it with a known and stated gap.
 
 use std::collections::HashSet;
 
@@ -64,7 +63,7 @@ pub enum CtlDirective {
     },
     /// `ctl:requestBodyAccess=On|Off`
     RequestBodyAccess(bool),
-    /// `ctl:requestBodyProcessor=URLENCODED|MULTIPART|JSON`
+    /// `ctl:requestBodyProcessor=URLENCODED|MULTIPART|JSON|XML`
     RequestBodyProcessor(String),
     /// A directive this engine does not implement.
     ///
@@ -80,10 +79,7 @@ pub enum CtlDirective {
 }
 
 /// Body processors this engine can actually run.
-///
-/// `XML` is deliberately absent: no parser exists yet, so accepting it would
-/// leave request bodies unexamined while the config claims otherwise.
-const SUPPORTED_BODY_PROCESSORS: &[&str] = &["URLENCODED", "MULTIPART", "JSON"];
+const SUPPORTED_BODY_PROCESSORS: &[&str] = &["URLENCODED", "MULTIPART", "JSON", "XML"];
 
 impl CtlDirective {
     /// Interpret a parsed `ctl:` action.
@@ -149,8 +145,8 @@ impl CtlDirective {
                     CtlDirective::unsupported(
                         directive,
                         value,
-                        "this engine implements the URLENCODED, MULTIPART and JSON body \
-                         processors; XML bodies would go unexamined",
+                        "requestBodyProcessor accepts only URLENCODED, MULTIPART, \
+                         JSON or XML",
                     )
                 }
             }
@@ -637,7 +633,7 @@ mod tests {
         // The whole point: a directive this engine cannot honour must not look
         // like it worked.
         for (directive, value) in [
-            ("requestBodyProcessor", "XML"),
+            ("requestBodyProcessor", "YAML"),
             ("auditEngine", "Off"),
             ("auditLogParts", "+E"),
             ("forceRequestBodyVariable", "On"),
@@ -654,7 +650,15 @@ mod tests {
 
     #[test]
     fn implemented_body_processors_are_accepted() {
-        for value in ["URLENCODED", "urlencoded", "MULTIPART", "JSON", "json"] {
+        for value in [
+            "URLENCODED",
+            "urlencoded",
+            "MULTIPART",
+            "JSON",
+            "json",
+            "XML",
+            "xml",
+        ] {
             assert!(
                 matches!(
                     CtlDirective::parse(&ctl("requestBodyProcessor", value)),

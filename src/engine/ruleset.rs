@@ -382,16 +382,22 @@ fn apply_target_updates(ruleset: &mut CompiledRuleset, updates: &[UpdateTargetBy
 /// Whether a rule variable refers to the target named by a directive argument
 /// such as `ARGS:bar` or `REQUEST_HEADERS`.
 fn variable_matches_target(var: &VariableSpec, target: &str) -> bool {
-    let (collection, key) = match target.split_once(':') {
-        Some((c, k)) => (c, Some(k)),
-        None => (target, None),
+    // Parse the directive's target with the same parser used for rule
+    // variables, so collection names round-trip correctly. Comparing the
+    // enum's Debug output instead would work only for single-word names:
+    // SecLang writes REQUEST_HEADERS where the variant renders as
+    // "RequestHeaders".
+    let Ok(parsed) = crate::parser::parse_single_variable(target) else {
+        return false;
     };
-    if !format!("{:?}", var.name).eq_ignore_ascii_case(collection) {
+    if var.name != parsed.name {
         return false;
     }
-    match (&var.selection, key) {
+    match (&var.selection, &parsed.selection) {
         (None, None) => true,
-        (Some(Selection::Key(existing)), Some(k)) => existing.eq_ignore_ascii_case(k),
+        (Some(Selection::Key(existing)), Some(Selection::Key(wanted))) => {
+            existing.eq_ignore_ascii_case(wanted.as_str())
+        }
         _ => false,
     }
 }

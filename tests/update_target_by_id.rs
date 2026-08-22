@@ -97,3 +97,26 @@ fn appending_a_target_extends_inspection() {
         "appended REQUEST_HEADERS:X-Custom target should be inspected"
     );
 }
+
+#[test]
+fn replace_form_matches_multi_word_collections() {
+    // Regression: target matching compared the VariableName enum's Debug
+    // output, so it worked for ARGS but not REQUEST_HEADERS — the variant
+    // renders as "RequestHeaders" while SecLang writes "REQUEST_HEADERS".
+    // The replace form silently did nothing for every multi-word collection.
+    let rules = "SecRuleEngine On\n\
+         SecRule REQUEST_HEADERS:X-Test \"@contains bad\" \"id:942100,phase:2,deny\"\n\
+         SecRuleUpdateTargetById 942100 \"ARGS:safe\" \"REQUEST_HEADERS:X-Test\"";
+    let msc = ModSecurity::from_string(rules).expect("rules should load");
+    let mut tx = msc.new_transaction();
+    tx.process_uri("/", "GET", "HTTP/1.1").unwrap();
+    tx.add_request_header("Host", "example.com").unwrap();
+    tx.add_request_header("X-Test", "bad").unwrap();
+    tx.process_request_headers().unwrap();
+    tx.process_request_body().unwrap();
+
+    assert!(
+        !tx.has_intervention(),
+        "the REQUEST_HEADERS:X-Test target should have been replaced"
+    );
+}

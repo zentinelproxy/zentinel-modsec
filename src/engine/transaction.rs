@@ -28,6 +28,18 @@ fn is_json_content_type(ct_lower: &str) -> bool {
         || media_type.ends_with("+json")
 }
 
+/// Whether a lowercased Content-Type denotes an XML body.
+///
+/// Covers the `+xml` structured suffix (RFC 6839), so SOAP
+/// (`application/soap+xml`), Atom and friends are inspected rather than
+/// falling through to a parser that finds nothing in them.
+fn is_xml_content_type(ct_lower: &str) -> bool {
+    let media_type = ct_lower.split(';').next().unwrap_or("").trim();
+    media_type == "application/xml"
+        || media_type == "text/xml"
+        || media_type.ends_with("+xml")
+}
+
 /// A ModSecurity transaction for processing a single request.
 pub struct Transaction {
     /// Compiled ruleset reference.
@@ -233,6 +245,7 @@ impl Transaction {
                     self.request.body_processor = "URLENCODED".to_string();
                 }
                 "JSON" => self.process_json_body(),
+                "XML" => self.process_xml_body(),
                 // CtlDirective::parse admits no other value.
                 other => debug_assert!(false, "unsupported forced body processor: {other}"),
             }
@@ -253,6 +266,8 @@ impl Transaction {
                      body arguments were not extracted"
                 );
             }
+        } else if is_xml_content_type(&ct_lower) {
+            self.process_xml_body();
         } else if is_json_content_type(&ct_lower) {
             // JSON bodies previously fell through to the urlencoded parser,
             // which extracts nothing usable from them -- so ARGS was empty and
@@ -269,6 +284,19 @@ impl Transaction {
 
         self.run_phase(Phase::RequestBody)?;
         Ok(())
+    }
+
+    /// Run the XML body processor, recording any failure.
+    ///
+    /// As with JSON, a failure is not fatal: phase 2 still runs so a rule
+    /// testing `REQBODY_ERROR` can act on it.
+    fn process_xml_body(&mut self) {
+        if let Err(e) = self.request.parse_xml_body() {
+            tracing::debug!(
+                error = %e,
+                "request body could not be processed as XML; REQBODY_ERROR is set"
+            );
+        }
     }
 
     /// Run the JSON body processor, recording any failure.

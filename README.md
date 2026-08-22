@@ -28,8 +28,10 @@ absolute numbers, which are hardware-dependent. Reproduce with
 > 6.2M req/s. Those figures came from a benchmark that never executed the
 > detection rules on the zentinel-modsec side — the ruleset's detection rule is
 > `phase:2`, but the measured section stopped after phase 1, and the attack
-> payloads did not match the rule's pattern in the first place. libmodsecurity
-> was doing real work in the same comparison, so the ratio was inflated.
+> payloads did not match the rule's pattern in the first place. That was true of
+> *both* engines, so the comparison measured transaction setup overhead on an
+> empty ruleset rather than rule evaluation. Body-processing and rule-parsing
+> figures always ran the rule and were unaffected.
 > Reported in [#15](https://github.com/zentinelproxy/zentinel-modsec/issues/15)
 > and corrected in the benchmark; these numbers are the re-measurement.
 >

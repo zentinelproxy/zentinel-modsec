@@ -22,7 +22,7 @@ use crate::variables::{Collection, RequestData, ResponseData, TxCollection, Vari
 /// so `application/vnd.api+json`, `application/problem+json` and friends are
 /// inspected rather than silently falling through to the urlencoded parser.
 fn is_json_content_type(ct_lower: &str) -> bool {
-    let media_type = ct_lower.split(';').next().unwrap_or("").trim_end();
+    let media_type = ct_lower.split(';').next().unwrap_or("").trim();
     media_type == "application/json"
         || media_type == "text/json"
         || media_type.ends_with("+json")

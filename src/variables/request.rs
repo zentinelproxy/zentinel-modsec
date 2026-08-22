@@ -1,6 +1,7 @@
 //! Request data for variable resolution.
 
 use super::collection::{Collection, HashMapCollection};
+use super::json::JsonNode;
 
 /// Request data container.
 #[derive(Debug, Clone, Default)]
@@ -269,7 +270,15 @@ impl RequestData {
     pub fn parse_json_body(&mut self) -> Result<(), String> {
         self.body_processor = "JSON".to_string();
 
-        let value: serde_json::Value = match serde_json::from_slice(&self.body) {
+        // A body that is empty or only whitespace has nothing to inspect, and
+        // is not a parse failure. Clients legitimately send an empty body with
+        // `Content-Type: application/json` on POST and DELETE; reporting that
+        // as an error would make CRS rule 200002 block them.
+        if self.body.iter().all(|b| b.is_ascii_whitespace()) {
+            return Ok(());
+        }
+
+        let value: JsonNode = match serde_json::from_slice(&self.body) {
             Ok(v) => v,
             Err(e) => {
                 let msg = format!("JSON parsing error: {e}");
@@ -323,7 +332,7 @@ const MAX_JSON_DEPTH: usize = 64;
 /// buffer is reused for the whole document. Returns `true` if a limit was hit
 /// and the result is therefore incomplete.
 fn flatten_json(
-    value: &serde_json::Value,
+    value: &JsonNode,
     path: &mut String,
     args: &mut HashMapCollection,
     count: &mut usize,
@@ -334,8 +343,11 @@ fn flatten_json(
     }
 
     match value {
-        serde_json::Value::Object(map) => {
-            for (key, child) in map {
+        JsonNode::Object(entries) => {
+            // Duplicate keys produce repeated entries under the same argument
+            // name, so every value a client sent is inspected. Keeping only
+            // one would let a parser differential hide a payload.
+            for (key, child) in entries {
                 let restore = path.len();
                 path.push('.');
                 path.push_str(key);
@@ -347,7 +359,7 @@ fn flatten_json(
             }
             false
         }
-        serde_json::Value::Array(items) => {
+        JsonNode::Array(items) => {
             for (index, child) in items.iter().enumerate() {
                 let restore = path.len();
                 path.push('.');
@@ -363,10 +375,10 @@ fn flatten_json(
         // Scalars are the leaves that become arguments. `null` contributes an
         // empty value rather than being skipped, so a rule testing for the
         // presence of a key still sees it.
-        serde_json::Value::String(s) => push_json_arg(path, s.clone(), args, count),
-        serde_json::Value::Number(n) => push_json_arg(path, n.to_string(), args, count),
-        serde_json::Value::Bool(b) => push_json_arg(path, b.to_string(), args, count),
-        serde_json::Value::Null => push_json_arg(path, String::new(), args, count),
+        JsonNode::String(s) => push_json_arg(path, s.clone(), args, count),
+        JsonNode::Number(n) => push_json_arg(path, n.clone(), args, count),
+        JsonNode::Bool(b) => push_json_arg(path, b.to_string(), args, count),
+        JsonNode::Null => push_json_arg(path, String::new(), args, count),
     }
 }
 

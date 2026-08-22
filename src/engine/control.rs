@@ -209,8 +209,12 @@ fn parse_id_ranges(value: &str) -> Option<Vec<RuleIdRange>> {
 pub struct TransactionControls {
     engine_mode: Option<RuleEngineMode>,
     removed_rules: Vec<RuleIdRange>,
-    /// `(rule id, target)` pairs from `ctl:ruleRemoveTargetById`.
-    removed_targets: Vec<(String, String)>,
+    /// `(rule id, parsed target)` pairs from `ctl:ruleRemoveTargetById`.
+    ///
+    /// The target is parsed once when the directive fires rather than once per
+    /// resolved value: a rule over a large collection would otherwise re-parse
+    /// the same string thousands of times.
+    removed_targets: Vec<(String, VariableSpec)>,
     request_body_access: Option<bool>,
     request_body_processor: Option<String>,
     /// Unsupported directives already reported, so a rule that fires on every
@@ -229,7 +233,22 @@ impl TransactionControls {
             CtlDirective::RuleEngine(mode) => self.engine_mode = Some(mode),
             CtlDirective::RuleRemoveById(mut ranges) => self.removed_rules.append(&mut ranges),
             CtlDirective::RuleRemoveTargetById { rule_id, target } => {
-                self.removed_targets.push((rule_id, target))
+                // Parse with the same parser used for rule variables so
+                // collection names round-trip: SecLang writes REQUEST_HEADERS
+                // where the enum variant renders as RequestHeaders.
+                match crate::parser::parse_single_variable(&target) {
+                    Ok(spec) => self.removed_targets.push((rule_id, spec)),
+                    Err(_) => {
+                        let key = format!("ruleRemoveTargetById={rule_id};{target}");
+                        if self.reported.insert(key) {
+                            tracing::warn!(
+                                rule_id = %rule_id,
+                                target = %target,
+                                "ignoring ctl:ruleRemoveTargetById with an unparseable target"
+                            );
+                        }
+                    }
+                }
             }
             CtlDirective::RequestBodyAccess(on) => self.request_body_access = Some(on),
             CtlDirective::RequestBodyProcessor(p) => self.request_body_processor = Some(p),
@@ -331,15 +350,12 @@ impl TransactionControls {
 /// collection names round-trip: SecLang writes `REQUEST_HEADERS` where the
 /// enum variant renders as `RequestHeaders`, and comparing rendered names
 /// would silently never match.
-fn target_matches_resolved(var: &VariableSpec, target: &str, resolved_name: &str) -> bool {
-    let Ok(parsed) = crate::parser::parse_single_variable(target) else {
-        return false;
-    };
-    if var.name != parsed.name {
+fn target_matches_resolved(var: &VariableSpec, target: &VariableSpec, resolved_name: &str) -> bool {
+    if var.name != target.name {
         return false;
     }
 
-    match &parsed.selection {
+    match &target.selection {
         // `ctl:...=ID;ARGS` excludes the whole collection from this rule.
         None => true,
         Some(Selection::Key(wanted)) => {

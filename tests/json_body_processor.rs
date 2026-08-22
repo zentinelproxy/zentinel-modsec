@@ -265,11 +265,48 @@ fn deeply_nested_json_does_not_overflow_the_stack() {
     assert!(run(crs_200002, "application/json", deep.as_bytes()));
 }
 
+/// An empty body is nothing to inspect, not a failure to parse.
+///
+/// Clients legitimately send `Content-Type: application/json` with an empty
+/// body on POST and DELETE. Reporting that through `REQBODY_ERROR` would make
+/// CRS rule 200002 block them — a false positive introduced by the WAF rather
+/// than a threat caught by it.
 #[test]
-fn an_empty_body_is_a_parse_error_not_a_crash() {
+fn an_empty_body_is_not_a_parse_error() {
     let crs_200002 = "SecRuleEngine On\n\
          SecRule REQBODY_ERROR \"!@eq 0\" \"id:200002,phase:2,deny,status:400\"";
-    assert!(run(crs_200002, "application/json", b""));
+    assert!(!run(crs_200002, "application/json", b""));
+    assert!(!run(crs_200002, "application/json", b"   \n\t "));
+}
+
+/// Duplicate keys must not hide a payload.
+///
+/// `serde_json::Value` keeps only the last value for a repeated key, so
+/// `{"a":"<payload>","a":"safe"}` would present only `safe` to the rules while
+/// an origin application whose parser keeps the first occurrence receives the
+/// payload. Every value that was sent is inspected instead.
+#[test]
+fn every_value_of_a_duplicated_key_is_inspected() {
+    const SQLI_TEXT: &str = "1 UNION SELECT password FROM users";
+    for body in [
+        format!(r#"{{"a":"{SQLI_TEXT}","a":"safe"}}"#),
+        format!(r#"{{"a":"safe","a":"{SQLI_TEXT}"}}"#),
+    ] {
+        assert!(
+            run(SQLI_RULE, "application/json", body.as_bytes()),
+            "payload must be found regardless of duplicate ordering: {body}"
+        );
+    }
+}
+
+/// Large integers keep their exact value rather than going through f64.
+#[test]
+fn large_numbers_are_not_rounded() {
+    assert!(run(
+        &rule_on_arg_value("json.id", "9007199254740993"),
+        "application/json",
+        br#"{"id":9007199254740993}"#
+    ));
 }
 
 // ---------------------------------------------------------------------------

@@ -194,7 +194,8 @@ mod tests {
 
     #[test]
     fn test_deny_intervention() {
-        let intervention = Intervention::deny(403, Phase::RequestHeaders, Some("12345".to_string()));
+        let intervention =
+            Intervention::deny(403, Phase::RequestHeaders, Some("12345".to_string()));
         assert_eq!(intervention.status, 403);
         assert_eq!(intervention.rule_ids, vec!["12345".to_string()]);
         assert!(!intervention.drop_connection);
@@ -230,7 +231,8 @@ mod tests {
 
     #[test]
     fn test_format_log() {
-        let intervention = Intervention::deny(403, Phase::RequestHeaders, Some("942100".to_string()));
+        let intervention =
+            Intervention::deny(403, Phase::RequestHeaders, Some("942100".to_string()));
         let log = intervention.format_log();
         assert!(log.contains("[status 403]"));
         assert!(log.contains("942100"));

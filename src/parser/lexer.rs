@@ -87,7 +87,7 @@ impl<'a> Lexer<'a> {
                     if chars.peek() == Some(&'\n') {
                         self.advance(); // consume backslash
                         self.advance(); // consume newline
-                        // Continue skipping whitespace on next line
+                                        // Continue skipping whitespace on next line
                     } else if chars.peek() == Some(&'\r') {
                         chars.next();
                         if chars.peek() == Some(&'\n') {
@@ -173,8 +173,7 @@ impl<'a> Lexer<'a> {
 
                 // Check if this is a directive (at start of line, starts with Sec or Include)
                 let kind = if was_at_line_start
-                    && (word.to_lowercase().starts_with("sec")
-                        || word.to_lowercase() == "include")
+                    && (word.to_lowercase().starts_with("sec") || word.to_lowercase() == "include")
                 {
                     TokenKind::Directive(word)
                 } else {

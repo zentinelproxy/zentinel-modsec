@@ -180,7 +180,11 @@ fn normalize_line_continuations(input: &str) -> String {
                 // Skip the backslash and newline
                 chars.next();
                 // Skip any leading whitespace on the next line
-                while chars.peek().map(|c| c.is_whitespace() && *c != '\n').unwrap_or(false) {
+                while chars
+                    .peek()
+                    .map(|c| c.is_whitespace() && *c != '\n')
+                    .unwrap_or(false)
+                {
                     chars.next();
                 }
                 continue;
@@ -191,7 +195,11 @@ fn normalize_line_continuations(input: &str) -> String {
                     chars.next();
                 }
                 // Skip any leading whitespace on the next line
-                while chars.peek().map(|c| c.is_whitespace() && *c != '\n').unwrap_or(false) {
+                while chars
+                    .peek()
+                    .map(|c| c.is_whitespace() && *c != '\n')
+                    .unwrap_or(false)
+                {
                     chars.next();
                 }
                 continue;
@@ -412,7 +420,9 @@ fn parse_single_action(input: &str) -> Result<Action> {
         "nolog" => Ok(Action::Logging(LoggingAction::NoLog)),
         "auditlog" => Ok(Action::Logging(LoggingAction::AuditLog)),
         "noauditlog" => Ok(Action::Logging(LoggingAction::NoAuditLog)),
-        "sanitisematched" | "sanitizematched" => Ok(Action::Logging(LoggingAction::SanitiseMatched)),
+        "sanitisematched" | "sanitizematched" => {
+            Ok(Action::Logging(LoggingAction::SanitiseMatched))
+        }
 
         // Control actions
         "ctl" => {
@@ -621,8 +631,11 @@ mod tests {
         match &actions[0] {
             Action::Data(DataAction::SetVar(spec)) => {
                 assert_eq!(spec.key, "anomaly_score");
-                assert!(matches!(spec.value, SetVarValue::Increment(5)),
-                    "expected Increment(5), got {:?}", spec.value);
+                assert!(
+                    matches!(spec.value, SetVarValue::Increment(5)),
+                    "expected Increment(5), got {:?}",
+                    spec.value
+                );
             }
             _ => panic!("expected SetVar"),
         }
@@ -634,8 +647,11 @@ mod tests {
         match &actions[0] {
             Action::Data(DataAction::SetVar(spec)) => {
                 assert_eq!(spec.key, "anomaly_score");
-                assert!(matches!(spec.value, SetVarValue::Int(7)),
-                    "expected Int(7), got {:?}", spec.value);
+                assert!(
+                    matches!(spec.value, SetVarValue::Int(7)),
+                    "expected Int(7), got {:?}",
+                    spec.value
+                );
             }
             _ => panic!("expected SetVar"),
         }
@@ -644,7 +660,9 @@ mod tests {
     #[test]
     fn test_parse_chain() {
         let actions = parse_actions("id:1,phase:2,chain").unwrap();
-        assert!(actions.iter().any(|a| matches!(a, Action::Flow(FlowAction::Chain))));
+        assert!(actions
+            .iter()
+            .any(|a| matches!(a, Action::Flow(FlowAction::Chain))));
     }
 
     #[test]

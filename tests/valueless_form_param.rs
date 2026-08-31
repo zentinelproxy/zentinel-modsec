@@ -16,7 +16,8 @@ use zentinel_modsec::ModSecurity;
 
 /// Does `target` see anything at all for this urlencoded body?
 fn body_populates(target: &str, body: &[u8]) -> bool {
-    let rules = format!("SecRuleEngine On\nSecRule {target} \"@rx .\" \"id:1,phase:2,deny,t:none\"");
+    let rules =
+        format!("SecRuleEngine On\nSecRule {target} \"@rx .\" \"id:1,phase:2,deny,t:none\"");
     let m = ModSecurity::from_string(&rules).expect("rules load");
     let mut tx = m.new_transaction();
     tx.process_uri("/post", "POST", "HTTP/1.1").unwrap();

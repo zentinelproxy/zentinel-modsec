@@ -388,7 +388,7 @@ impl Transformation for SqlHexDecode {
                 // Decode hex pairs
                 let mut i = 0;
                 while i + 1 < hex.len() {
-                    if let Ok(byte) = u8::from_str_radix(&hex[i..i+2], 16) {
+                    if let Ok(byte) = u8::from_str_radix(&hex[i..i + 2], 16) {
                         result.push(byte as char);
                     }
                     i += 2;
@@ -647,7 +647,10 @@ mod tests {
         // written against, e.g. 932140 matching `in\(`.
         assert_eq!(t.transform("CMD;/C"), "cmd/c");
         assert_eq!(t.transform("CMD,/C;DIR"), "cmd/c dir");
-        assert_eq!(t.transform("for %v in (set) do cmd"), "for %v in(set) do cmd");
+        assert_eq!(
+            t.transform("for %v in (set) do cmd"),
+            "for %v in(set) do cmd"
+        );
         assert_eq!(t.transform("cat /etc/passwd"), "cat/etc/passwd");
         // Nothing to change: borrowed, not reallocated.
         assert!(matches!(t.transform("already normal"), Cow::Borrowed(_)));

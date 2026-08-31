@@ -40,18 +40,18 @@
 #![warn(clippy::all)]
 #![deny(unsafe_code)]
 
-pub mod error;
-pub mod parser;
-pub mod variables;
-pub mod operators;
-pub mod transformations;
 pub mod actions;
 pub mod engine;
+pub mod error;
 pub mod libinjection;
+pub mod operators;
+pub mod parser;
+pub mod transformations;
+pub mod variables;
 
 // Re-export main types at crate root
-pub use engine::{ModSecurity, Transaction, Intervention};
-pub use engine::ruleset::{Rules, CompiledRuleset};
+pub use engine::ruleset::{CompiledRuleset, Rules};
+pub use engine::{Intervention, ModSecurity, Transaction};
 pub use error::{Error, Result};
 
 /// Protocol version for compatibility tracking

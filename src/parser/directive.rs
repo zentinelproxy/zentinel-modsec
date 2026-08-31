@@ -129,7 +129,9 @@ impl Default for RuleEngineMode {
 impl SecRule {
     /// Check if this rule has the chain action.
     pub fn is_chained(&self) -> bool {
-        self.actions.iter().any(|a| matches!(a, Action::Flow(super::FlowAction::Chain)))
+        self.actions
+            .iter()
+            .any(|a| matches!(a, Action::Flow(super::FlowAction::Chain)))
     }
 
     /// Get the rule ID if present.

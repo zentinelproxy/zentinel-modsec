@@ -139,9 +139,11 @@ impl<'a> VariableResolver<'a> {
                 "ARGS_NAMES",
                 selection,
             ),
-            VariableName::ArgsGetNames => {
-                self.resolve_collection_names(&[&self.request.args_get], "ARGS_GET_NAMES", selection)
-            }
+            VariableName::ArgsGetNames => self.resolve_collection_names(
+                &[&self.request.args_get],
+                "ARGS_GET_NAMES",
+                selection,
+            ),
             VariableName::ArgsPostNames => self.resolve_collection_names(
                 &[&self.request.args_post],
                 "ARGS_POST_NAMES",
@@ -170,9 +172,7 @@ impl<'a> VariableResolver<'a> {
                 "MULTIPART_PART_HEADERS",
                 selection,
             ),
-            VariableName::Files => {
-                self.resolve_collection(&self.request.files, "FILES", selection)
-            }
+            VariableName::Files => self.resolve_collection(&self.request.files, "FILES", selection),
             VariableName::FilesNames => {
                 self.resolve_collection_names(&[&self.request.files], "FILES_NAMES", selection)
             }
@@ -318,7 +318,11 @@ impl<'a> VariableResolver<'a> {
 
         match selection {
             Some(Selection::Key(key)) => {
-                let lookup = if lowercase_key { key.to_ascii_lowercase() } else { key.clone() };
+                let lookup = if lowercase_key {
+                    key.to_ascii_lowercase()
+                } else {
+                    key.clone()
+                };
                 if let Some(values) = collection.get(&lookup) {
                     values
                         .into_iter()
@@ -384,12 +388,18 @@ impl<'a> VariableResolver<'a> {
                 if !wanted {
                     return None;
                 }
-                Some((format!("XML:/{}", path.replace('.', "/")), value.to_string()))
+                Some((
+                    format!("XML:/{}", path.replace('.', "/")),
+                    value.to_string(),
+                ))
             })
             .collect()
     }
 
-    fn resolve_collection_from_all_args(&self, selection: &Option<Selection>) -> Vec<(String, String)> {
+    fn resolve_collection_from_all_args(
+        &self,
+        selection: &Option<Selection>,
+    ) -> Vec<(String, String)> {
         let mut result = self.resolve_collection(&self.request.args_get, "ARGS", selection);
         result.extend(self.resolve_collection(&self.request.args_post, "ARGS", selection));
         result
@@ -504,7 +514,10 @@ mod tests {
         assert!(!exclusion_matches("ARGS:password2", "ARGS:password"));
         assert!(!exclusion_matches("ARGS:xpassword", "ARGS:password"));
         // Different collection.
-        assert!(!exclusion_matches("REQUEST_COOKIES:password", "ARGS:password"));
+        assert!(!exclusion_matches(
+            "REQUEST_COOKIES:password",
+            "ARGS:password"
+        ));
     }
 
     #[test]
@@ -514,7 +527,10 @@ mod tests {
             "REQUEST_COOKIES:_ga_ABC123",
             r"REQUEST_COOKIES:/^_ga(?:_\w+)?$/"
         ));
-        assert!(exclusion_matches("REQUEST_COOKIES:_ga", r"REQUEST_COOKIES:/^_ga(?:_\w+)?$/"));
+        assert!(exclusion_matches(
+            "REQUEST_COOKIES:_ga",
+            r"REQUEST_COOKIES:/^_ga(?:_\w+)?$/"
+        ));
         assert!(!exclusion_matches(
             "REQUEST_COOKIES:session",
             r"REQUEST_COOKIES:/^_ga(?:_\w+)?$/"

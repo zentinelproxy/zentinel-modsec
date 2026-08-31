@@ -291,7 +291,13 @@ mod tests {
         assert_eq!(OperatorName::from_str("rx"), Some(OperatorName::Rx));
         assert_eq!(OperatorName::from_str("RX"), Some(OperatorName::Rx));
         assert_eq!(OperatorName::from_str("Rx"), Some(OperatorName::Rx));
-        assert_eq!(OperatorName::from_str("detectSQLi"), Some(OperatorName::DetectSqli));
-        assert_eq!(OperatorName::from_str("DETECTSQLI"), Some(OperatorName::DetectSqli));
+        assert_eq!(
+            OperatorName::from_str("detectSQLi"),
+            Some(OperatorName::DetectSqli)
+        );
+        assert_eq!(
+            OperatorName::from_str("DETECTSQLI"),
+            Some(OperatorName::DetectSqli)
+        );
     }
 }

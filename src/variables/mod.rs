@@ -5,12 +5,12 @@
 mod collection;
 mod json;
 mod request;
+mod resolver;
 mod response;
 mod tx;
-mod resolver;
 
-pub use collection::{Collection, MutableCollection, HashMapCollection};
+pub use collection::{Collection, HashMapCollection, MutableCollection};
 pub use request::RequestData;
+pub use resolver::VariableResolver;
 pub use response::ResponseData;
 pub use tx::TxCollection;
-pub use resolver::VariableResolver;

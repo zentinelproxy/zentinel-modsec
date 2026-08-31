@@ -31,50 +31,119 @@ pub enum Selection {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum VariableName {
     // Request variables
-    Args, ArgsGet, ArgsPost, ArgsNames, ArgsGetNames, ArgsPostNames, ArgsCombinedSize,
-    RequestUri, RequestUriRaw, RequestFilename, RequestBasename, RequestLine,
-    RequestMethod, RequestProtocol, RequestHeaders, RequestHeadersNames,
-    RequestCookies, RequestCookiesNames, RequestBody, RequestBodyLength, QueryString,
+    Args,
+    ArgsGet,
+    ArgsPost,
+    ArgsNames,
+    ArgsGetNames,
+    ArgsPostNames,
+    ArgsCombinedSize,
+    RequestUri,
+    RequestUriRaw,
+    RequestFilename,
+    RequestBasename,
+    RequestLine,
+    RequestMethod,
+    RequestProtocol,
+    RequestHeaders,
+    RequestHeadersNames,
+    RequestCookies,
+    RequestCookiesNames,
+    RequestBody,
+    RequestBodyLength,
+    QueryString,
 
     // Response variables
-    ResponseStatus, ResponseProtocol, ResponseHeaders, ResponseHeadersNames,
-    ResponseBody, ResponseContentType, ResponseContentLength,
+    ResponseStatus,
+    ResponseProtocol,
+    ResponseHeaders,
+    ResponseHeadersNames,
+    ResponseBody,
+    ResponseContentType,
+    ResponseContentLength,
 
     // Server/Client info
-    RemoteAddr, RemotePort, RemoteHost, RemoteUser,
-    ServerAddr, ServerPort, ServerName,
+    RemoteAddr,
+    RemotePort,
+    RemoteHost,
+    RemoteUser,
+    ServerAddr,
+    ServerPort,
+    ServerName,
 
     // Collections
-    Tx, Session, Env, Ip, Global, Resource, User, Geo,
+    Tx,
+    Session,
+    Env,
+    Ip,
+    Global,
+    Resource,
+    User,
+    Geo,
 
     // Matched data
-    MatchedVar, MatchedVars, MatchedVarName, MatchedVarsNames,
+    MatchedVar,
+    MatchedVars,
+    MatchedVarName,
+    MatchedVarsNames,
 
     // Time variables
-    Time, TimeEpoch, TimeDay, TimeHour, TimeMin, TimeSec, TimeWday, TimeMon, TimeYear,
+    Time,
+    TimeEpoch,
+    TimeDay,
+    TimeHour,
+    TimeMin,
+    TimeSec,
+    TimeWday,
+    TimeMon,
+    TimeYear,
 
     // Files
-    Files, FilesSizes, FilesTmpnames, FilesCombinedSize, FilesNames,
+    Files,
+    FilesSizes,
+    FilesTmpnames,
+    FilesCombinedSize,
+    FilesNames,
 
     // Special
-    UniqueId, InboundAnomalyScore, OutboundAnomalyScore, Duration,
-    MultipartBoundaryQuoted, MultipartBoundaryWhitespace, MultipartDataAfter,
-    MultipartDataBefore, MultipartFileLimitExceeded, MultipartHeaderFolding,
-    MultipartInvalidHeaderFolding, MultipartInvalidPart, MultipartInvalidQuoting,
-    MultipartLfLine, MultipartMissingSemicolon, MultipartStrictError,
-    MultipartUnmatchedBoundary, MultipartPartHeaders,
+    UniqueId,
+    InboundAnomalyScore,
+    OutboundAnomalyScore,
+    Duration,
+    MultipartBoundaryQuoted,
+    MultipartBoundaryWhitespace,
+    MultipartDataAfter,
+    MultipartDataBefore,
+    MultipartFileLimitExceeded,
+    MultipartHeaderFolding,
+    MultipartInvalidHeaderFolding,
+    MultipartInvalidPart,
+    MultipartInvalidQuoting,
+    MultipartLfLine,
+    MultipartMissingSemicolon,
+    MultipartStrictError,
+    MultipartUnmatchedBoundary,
+    MultipartPartHeaders,
 
     // XML
     Xml,
 
     // Web server
-    WebserverErrorLog, HighestSeverity, StatusLine, FullRequest, FullRequestLength,
+    WebserverErrorLog,
+    HighestSeverity,
+    StatusLine,
+    FullRequest,
+    FullRequestLength,
 
     // Auth
     AuthType,
 
     // Request body processing
-    ReqBodyProcessor, ReqBodyError, ReqBodyErrorMsg, ReqBodyProcessorError, ReqBodyProcessorErrorMsg,
+    ReqBodyProcessor,
+    ReqBodyError,
+    ReqBodyErrorMsg,
+    ReqBodyProcessorError,
+    ReqBodyProcessorErrorMsg,
 
     // Multipart strict
     MultipartStrictCheck,
@@ -128,39 +197,99 @@ impl VariableName {
     /// compile until it has been classified here.
     pub fn is_implemented(&self) -> bool {
         match self {
-            VariableName::Xml | VariableName::Args | VariableName::ArgsGet | VariableName::ArgsPost |
-            VariableName::ArgsNames | VariableName::ArgsGetNames | VariableName::ArgsPostNames |
-            VariableName::ArgsCombinedSize | VariableName::RequestUri | VariableName::RequestUriRaw |
-            VariableName::RequestFilename | VariableName::RequestBasename | VariableName::RequestLine |
-            VariableName::RequestMethod | VariableName::RequestProtocol | VariableName::RequestHeaders |
-            VariableName::RequestHeadersNames | VariableName::RequestCookies | VariableName::RequestCookiesNames |
-            VariableName::RequestBody | VariableName::RequestBodyLength | VariableName::QueryString |
-            VariableName::ResponseStatus | VariableName::ResponseHeaders | VariableName::ResponseBody |
-            VariableName::ResponseContentType | VariableName::RemoteAddr | VariableName::RemotePort |
-            VariableName::ServerAddr | VariableName::ServerPort | VariableName::ServerName |
-            VariableName::Tx | VariableName::MatchedVar | VariableName::MatchedVars |
-            VariableName::MatchedVarName | VariableName::MatchedVarsNames | VariableName::Files |
-            VariableName::FilesNames | VariableName::MultipartPartHeaders | VariableName::ReqBodyProcessor |
-            VariableName::ReqBodyError | VariableName::ReqBodyErrorMsg | VariableName::ReqBodyProcessorError |
-            VariableName::ReqBodyProcessorErrorMsg => true,
+            VariableName::Xml
+            | VariableName::Args
+            | VariableName::ArgsGet
+            | VariableName::ArgsPost
+            | VariableName::ArgsNames
+            | VariableName::ArgsGetNames
+            | VariableName::ArgsPostNames
+            | VariableName::ArgsCombinedSize
+            | VariableName::RequestUri
+            | VariableName::RequestUriRaw
+            | VariableName::RequestFilename
+            | VariableName::RequestBasename
+            | VariableName::RequestLine
+            | VariableName::RequestMethod
+            | VariableName::RequestProtocol
+            | VariableName::RequestHeaders
+            | VariableName::RequestHeadersNames
+            | VariableName::RequestCookies
+            | VariableName::RequestCookiesNames
+            | VariableName::RequestBody
+            | VariableName::RequestBodyLength
+            | VariableName::QueryString
+            | VariableName::ResponseStatus
+            | VariableName::ResponseHeaders
+            | VariableName::ResponseBody
+            | VariableName::ResponseContentType
+            | VariableName::RemoteAddr
+            | VariableName::RemotePort
+            | VariableName::ServerAddr
+            | VariableName::ServerPort
+            | VariableName::ServerName
+            | VariableName::Tx
+            | VariableName::MatchedVar
+            | VariableName::MatchedVars
+            | VariableName::MatchedVarName
+            | VariableName::MatchedVarsNames
+            | VariableName::Files
+            | VariableName::FilesNames
+            | VariableName::MultipartPartHeaders
+            | VariableName::ReqBodyProcessor
+            | VariableName::ReqBodyError
+            | VariableName::ReqBodyErrorMsg
+            | VariableName::ReqBodyProcessorError
+            | VariableName::ReqBodyProcessorErrorMsg => true,
 
-            VariableName::ResponseProtocol | VariableName::ResponseHeadersNames | VariableName::ResponseContentLength |
-            VariableName::RemoteHost | VariableName::RemoteUser | VariableName::Session |
-            VariableName::Env | VariableName::Ip | VariableName::Global |
-            VariableName::Resource | VariableName::User | VariableName::Geo |
-            VariableName::Time | VariableName::TimeEpoch | VariableName::TimeDay |
-            VariableName::TimeHour | VariableName::TimeMin | VariableName::TimeSec |
-            VariableName::TimeWday | VariableName::TimeMon | VariableName::TimeYear |
-            VariableName::FilesSizes | VariableName::FilesTmpnames | VariableName::FilesCombinedSize |
-            VariableName::UniqueId | VariableName::InboundAnomalyScore | VariableName::OutboundAnomalyScore |
-            VariableName::Duration | VariableName::MultipartBoundaryQuoted | VariableName::MultipartBoundaryWhitespace |
-            VariableName::MultipartDataAfter | VariableName::MultipartDataBefore | VariableName::MultipartFileLimitExceeded |
-            VariableName::MultipartHeaderFolding | VariableName::MultipartInvalidHeaderFolding | VariableName::MultipartInvalidPart |
-            VariableName::MultipartInvalidQuoting | VariableName::MultipartLfLine | VariableName::MultipartMissingSemicolon |
-            VariableName::MultipartStrictError | VariableName::MultipartUnmatchedBoundary |
-            VariableName::WebserverErrorLog | VariableName::HighestSeverity | VariableName::StatusLine |
-            VariableName::FullRequest | VariableName::FullRequestLength | VariableName::AuthType |
-            VariableName::MultipartStrictCheck => false,
+            VariableName::ResponseProtocol
+            | VariableName::ResponseHeadersNames
+            | VariableName::ResponseContentLength
+            | VariableName::RemoteHost
+            | VariableName::RemoteUser
+            | VariableName::Session
+            | VariableName::Env
+            | VariableName::Ip
+            | VariableName::Global
+            | VariableName::Resource
+            | VariableName::User
+            | VariableName::Geo
+            | VariableName::Time
+            | VariableName::TimeEpoch
+            | VariableName::TimeDay
+            | VariableName::TimeHour
+            | VariableName::TimeMin
+            | VariableName::TimeSec
+            | VariableName::TimeWday
+            | VariableName::TimeMon
+            | VariableName::TimeYear
+            | VariableName::FilesSizes
+            | VariableName::FilesTmpnames
+            | VariableName::FilesCombinedSize
+            | VariableName::UniqueId
+            | VariableName::InboundAnomalyScore
+            | VariableName::OutboundAnomalyScore
+            | VariableName::Duration
+            | VariableName::MultipartBoundaryQuoted
+            | VariableName::MultipartBoundaryWhitespace
+            | VariableName::MultipartDataAfter
+            | VariableName::MultipartDataBefore
+            | VariableName::MultipartFileLimitExceeded
+            | VariableName::MultipartHeaderFolding
+            | VariableName::MultipartInvalidHeaderFolding
+            | VariableName::MultipartInvalidPart
+            | VariableName::MultipartInvalidQuoting
+            | VariableName::MultipartLfLine
+            | VariableName::MultipartMissingSemicolon
+            | VariableName::MultipartStrictError
+            | VariableName::MultipartUnmatchedBoundary
+            | VariableName::WebserverErrorLog
+            | VariableName::HighestSeverity
+            | VariableName::StatusLine
+            | VariableName::FullRequest
+            | VariableName::FullRequestLength
+            | VariableName::AuthType
+            | VariableName::MultipartStrictCheck => false,
         }
     }
 }
@@ -268,14 +397,30 @@ impl VariableName {
     pub fn is_collection(&self) -> bool {
         matches!(
             self,
-            Self::Args | Self::ArgsGet | Self::ArgsPost | Self::ArgsNames
-                | Self::RequestHeaders | Self::RequestHeadersNames
-                | Self::RequestCookies | Self::RequestCookiesNames
-                | Self::ResponseHeaders | Self::ResponseHeadersNames
-                | Self::Tx | Self::Session | Self::Env | Self::Ip
-                | Self::Global | Self::Resource | Self::User | Self::Geo
-                | Self::MatchedVars | Self::MatchedVarsNames
-                | Self::Files | Self::FilesSizes | Self::FilesTmpnames | Self::FilesNames
+            Self::Args
+                | Self::ArgsGet
+                | Self::ArgsPost
+                | Self::ArgsNames
+                | Self::RequestHeaders
+                | Self::RequestHeadersNames
+                | Self::RequestCookies
+                | Self::RequestCookiesNames
+                | Self::ResponseHeaders
+                | Self::ResponseHeadersNames
+                | Self::Tx
+                | Self::Session
+                | Self::Env
+                | Self::Ip
+                | Self::Global
+                | Self::Resource
+                | Self::User
+                | Self::Geo
+                | Self::MatchedVars
+                | Self::MatchedVarsNames
+                | Self::Files
+                | Self::FilesSizes
+                | Self::FilesTmpnames
+                | Self::FilesNames
                 | Self::MultipartPartHeaders
         )
     }
@@ -369,11 +514,12 @@ pub(crate) fn parse_single_variable(input: &str) -> Result<VariableSpec> {
             let name = &input[..pos];
             let sel_str = &input[pos + 1..];
 
-            let selection = if sel_str.starts_with('/') && sel_str.ends_with('/') && sel_str.len() > 2 {
-                Some(Selection::Regex(sel_str[1..sel_str.len() - 1].to_string()))
-            } else {
-                Some(Selection::Key(sel_str.to_string()))
-            };
+            let selection =
+                if sel_str.starts_with('/') && sel_str.ends_with('/') && sel_str.len() > 2 {
+                    Some(Selection::Regex(sel_str[1..sel_str.len() - 1].to_string()))
+                } else {
+                    Some(Selection::Key(sel_str.to_string()))
+                };
 
             (name, selection)
         }
@@ -444,8 +590,17 @@ mod tests {
 
     #[test]
     fn test_variable_lookup_case_insensitive() {
-        assert_eq!(VariableName::from_str("REQUEST_URI"), Some(VariableName::RequestUri));
-        assert_eq!(VariableName::from_str("request_uri"), Some(VariableName::RequestUri));
-        assert_eq!(VariableName::from_str("Request_Uri"), Some(VariableName::RequestUri));
+        assert_eq!(
+            VariableName::from_str("REQUEST_URI"),
+            Some(VariableName::RequestUri)
+        );
+        assert_eq!(
+            VariableName::from_str("request_uri"),
+            Some(VariableName::RequestUri)
+        );
+        assert_eq!(
+            VariableName::from_str("Request_Uri"),
+            Some(VariableName::RequestUri)
+        );
     }
 }

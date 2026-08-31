@@ -5,9 +5,9 @@
 //! in user input that may be injected into SQL queries.
 
 use super::DetectionResult;
-use std::collections::HashSet;
 use once_cell::sync::Lazy;
 use regex::Regex;
+use std::collections::HashSet;
 
 /// SQL token types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,20 +68,98 @@ struct Token {
 /// SQL keywords that indicate potential injection.
 static SQL_KEYWORDS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
     [
-        "SELECT", "INSERT", "UPDATE", "DELETE", "DROP", "TRUNCATE", "ALTER",
-        "CREATE", "UNION", "FROM", "WHERE", "INTO", "VALUES", "SET",
-        "TABLE", "DATABASE", "INDEX", "EXEC", "EXECUTE", "HAVING",
-        "GROUP", "ORDER", "BY", "LIMIT", "OFFSET", "JOIN", "LEFT", "RIGHT",
-        "INNER", "OUTER", "CROSS", "NATURAL", "AS", "ON", "USING",
-        "CASE", "WHEN", "THEN", "ELSE", "END", "IF", "WHILE", "DECLARE",
-        "BEGIN", "COMMIT", "ROLLBACK", "GRANT", "REVOKE", "NULL", "ALL",
-        "DISTINCT", "EXISTS", "BETWEEN", "IN", "IS", "LIKE", "ESCAPE",
-        "WAITFOR", "DELAY", "SHUTDOWN", "BENCHMARK", "SLEEP", "LOAD_FILE",
-        "OUTFILE", "DUMPFILE", "INFORMATION_SCHEMA", "EXTRACTVALUE",
-        "UPDATEXML", "FLOOR", "RAND", "COUNT", "CONCAT", "CHAR", "ASCII",
-        "SUBSTRING", "SUBSTR", "MID", "VERSION", "USER", "DATABASE",
-        "SCHEMA", "PASSWORD", "MD5", "SHA1", "SHA2", "ENCODE", "DECODE",
-        "HEX", "UNHEX", "CONV", "CONVERT", "CAST",
+        "SELECT",
+        "INSERT",
+        "UPDATE",
+        "DELETE",
+        "DROP",
+        "TRUNCATE",
+        "ALTER",
+        "CREATE",
+        "UNION",
+        "FROM",
+        "WHERE",
+        "INTO",
+        "VALUES",
+        "SET",
+        "TABLE",
+        "DATABASE",
+        "INDEX",
+        "EXEC",
+        "EXECUTE",
+        "HAVING",
+        "GROUP",
+        "ORDER",
+        "BY",
+        "LIMIT",
+        "OFFSET",
+        "JOIN",
+        "LEFT",
+        "RIGHT",
+        "INNER",
+        "OUTER",
+        "CROSS",
+        "NATURAL",
+        "AS",
+        "ON",
+        "USING",
+        "CASE",
+        "WHEN",
+        "THEN",
+        "ELSE",
+        "END",
+        "IF",
+        "WHILE",
+        "DECLARE",
+        "BEGIN",
+        "COMMIT",
+        "ROLLBACK",
+        "GRANT",
+        "REVOKE",
+        "NULL",
+        "ALL",
+        "DISTINCT",
+        "EXISTS",
+        "BETWEEN",
+        "IN",
+        "IS",
+        "LIKE",
+        "ESCAPE",
+        "WAITFOR",
+        "DELAY",
+        "SHUTDOWN",
+        "BENCHMARK",
+        "SLEEP",
+        "LOAD_FILE",
+        "OUTFILE",
+        "DUMPFILE",
+        "INFORMATION_SCHEMA",
+        "EXTRACTVALUE",
+        "UPDATEXML",
+        "FLOOR",
+        "RAND",
+        "COUNT",
+        "CONCAT",
+        "CHAR",
+        "ASCII",
+        "SUBSTRING",
+        "SUBSTR",
+        "MID",
+        "VERSION",
+        "USER",
+        "DATABASE",
+        "SCHEMA",
+        "PASSWORD",
+        "MD5",
+        "SHA1",
+        "SHA2",
+        "ENCODE",
+        "DECODE",
+        "HEX",
+        "UNHEX",
+        "CONV",
+        "CONVERT",
+        "CAST",
     ]
     .iter()
     .cloned()
@@ -91,20 +169,95 @@ static SQL_KEYWORDS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
 /// SQL functions.
 static SQL_FUNCTIONS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
     [
-        "CONCAT", "SUBSTR", "SUBSTRING", "MID", "LENGTH", "LEN", "CHAR",
-        "ASCII", "ORD", "CONV", "HEX", "UNHEX", "BIN", "OCT", "MD5", "SHA1",
-        "SHA2", "ENCODE", "DECODE", "COMPRESS", "UNCOMPRESS", "AES_ENCRYPT",
-        "AES_DECRYPT", "PASSWORD", "ENCRYPT", "VERSION", "USER", "DATABASE",
-        "SCHEMA", "CURRENT_USER", "SESSION_USER", "SYSTEM_USER", "NOW",
-        "CURDATE", "CURTIME", "UTC_DATE", "UTC_TIME", "SLEEP", "BENCHMARK",
-        "LOAD_FILE", "EXTRACTVALUE", "UPDATEXML", "FLOOR", "RAND", "CEIL",
-        "ROUND", "COUNT", "SUM", "AVG", "MIN", "MAX", "GROUP_CONCAT",
-        "COALESCE", "NULLIF", "IFNULL", "NVL", "DECODE", "CASE", "IF",
-        "IIF", "CONVERT", "CAST", "TRIM", "LTRIM", "RTRIM", "UPPER",
-        "LOWER", "UCASE", "LCASE", "REPLACE", "REVERSE", "INSERT",
-        "INSTR", "LOCATE", "POSITION", "FIND_IN_SET", "FIELD", "ELT",
-        "MAKE_SET", "EXPORT_SET", "REPEAT", "SPACE", "LPAD", "RPAD",
-        "LEFT", "RIGHT", "QUOTE", "SOUNDEX", "FORMAT",
+        "CONCAT",
+        "SUBSTR",
+        "SUBSTRING",
+        "MID",
+        "LENGTH",
+        "LEN",
+        "CHAR",
+        "ASCII",
+        "ORD",
+        "CONV",
+        "HEX",
+        "UNHEX",
+        "BIN",
+        "OCT",
+        "MD5",
+        "SHA1",
+        "SHA2",
+        "ENCODE",
+        "DECODE",
+        "COMPRESS",
+        "UNCOMPRESS",
+        "AES_ENCRYPT",
+        "AES_DECRYPT",
+        "PASSWORD",
+        "ENCRYPT",
+        "VERSION",
+        "USER",
+        "DATABASE",
+        "SCHEMA",
+        "CURRENT_USER",
+        "SESSION_USER",
+        "SYSTEM_USER",
+        "NOW",
+        "CURDATE",
+        "CURTIME",
+        "UTC_DATE",
+        "UTC_TIME",
+        "SLEEP",
+        "BENCHMARK",
+        "LOAD_FILE",
+        "EXTRACTVALUE",
+        "UPDATEXML",
+        "FLOOR",
+        "RAND",
+        "CEIL",
+        "ROUND",
+        "COUNT",
+        "SUM",
+        "AVG",
+        "MIN",
+        "MAX",
+        "GROUP_CONCAT",
+        "COALESCE",
+        "NULLIF",
+        "IFNULL",
+        "NVL",
+        "DECODE",
+        "CASE",
+        "IF",
+        "IIF",
+        "CONVERT",
+        "CAST",
+        "TRIM",
+        "LTRIM",
+        "RTRIM",
+        "UPPER",
+        "LOWER",
+        "UCASE",
+        "LCASE",
+        "REPLACE",
+        "REVERSE",
+        "INSERT",
+        "INSTR",
+        "LOCATE",
+        "POSITION",
+        "FIND_IN_SET",
+        "FIELD",
+        "ELT",
+        "MAKE_SET",
+        "EXPORT_SET",
+        "REPEAT",
+        "SPACE",
+        "LPAD",
+        "RPAD",
+        "LEFT",
+        "RIGHT",
+        "QUOTE",
+        "SOUNDEX",
+        "FORMAT",
     ]
     .iter()
     .cloned()
@@ -116,74 +269,66 @@ static SQL_FUNCTIONS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
 static SQLI_FINGERPRINTS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
     [
         // Classic injection patterns
-        "1&1",      // 1 OR 1
-        "s&s",      // 'x' OR 'x'
-        "1&s",      // 1 OR 'x'
-        "s&1",      // 'x' OR 1
-        "sok",      // ' OR keyword
-        "1ok",      // 1 OR keyword
-        "so1",      // ' OR 1
-        "1o1",      // 1 OR 1
-        "sos",      // ' OR '
-        "sks",      // ' keyword '
-        "1k1",      // 1 keyword 1
-        "sk1",      // ' keyword 1
-        "1ks",      // 1 keyword '
-
+        "1&1", // 1 OR 1
+        "s&s", // 'x' OR 'x'
+        "1&s", // 1 OR 'x'
+        "s&1", // 'x' OR 1
+        "sok", // ' OR keyword
+        "1ok", // 1 OR keyword
+        "so1", // ' OR 1
+        "1o1", // 1 OR 1
+        "sos", // ' OR '
+        "sks", // ' keyword '
+        "1k1", // 1 keyword 1
+        "sk1", // ' keyword 1
+        "1ks", // 1 keyword '
         // Union-based injection
-        "1kk",      // 1 UNION SELECT
-        "skk",      // ' UNION SELECT
-        "Ek",       // ) UNION
-        "kk",       // SELECT FROM / UNION SELECT
-        "kkk",      // UNION SELECT FROM
-        "kks",      // SELECT 'x'
-        "kk1",      // SELECT 1
-        "kkf",      // SELECT function
-        "kfk",      // keyword function keyword
-
+        "1kk", // 1 UNION SELECT
+        "skk", // ' UNION SELECT
+        "Ek",  // ) UNION
+        "kk",  // SELECT FROM / UNION SELECT
+        "kkk", // UNION SELECT FROM
+        "kks", // SELECT 'x'
+        "kk1", // SELECT 1
+        "kkf", // SELECT function
+        "kfk", // keyword function keyword
         // Comment-based
-        "scs",      // '/* */'
-        "1c1",      // 1/* */1
-        "sc",       // ' --
-        "1c",       // 1 --
-        "ck",       // -- SELECT
-        "cs",       // -- 'x'
-        "c1",       // -- 1
-
+        "scs", // '/* */'
+        "1c1", // 1/* */1
+        "sc",  // ' --
+        "1c",  // 1 --
+        "ck",  // -- SELECT
+        "cs",  // -- 'x'
+        "c1",  // -- 1
         // Function-based
-        "f",        // function()
-        "fk",       // function() keyword
-        "kf",       // keyword function()
-        "fs",       // function('x')
-        "f1",       // function(1)
-        "fEk",      // function() ) keyword
-
+        "f",   // function()
+        "fk",  // function() keyword
+        "kf",  // keyword function()
+        "fs",  // function('x')
+        "f1",  // function(1)
+        "fEk", // function() ) keyword
         // Expression-based
-        "Ek",       // ) keyword
-        "E&E",      // ) OR (
-        "Eo",       // ) operator
-        "oE",       // operator (
-        "EoE",      // ) = (
-
+        "Ek",  // ) keyword
+        "E&E", // ) OR (
+        "Eo",  // ) operator
+        "oE",  // operator (
+        "EoE", // ) = (
         // Stacked queries
-        "1ok",      // 1; DROP
-        "sok",      // '; DROP
-        "okk",      // ; SELECT
-        "ok",       // ; keyword
-
+        "1ok", // 1; DROP
+        "sok", // '; DROP
+        "okk", // ; SELECT
+        "ok",  // ; keyword
         // Error-based
-        "kfE",      // EXTRACTVALUE()
-        "fkf",      // function keyword function
-
+        "kfE", // EXTRACTVALUE()
+        "fkf", // function keyword function
         // Boolean-based
-        "1&1o1",    // 1 AND 1=1
-        "s&so1",    // ' AND '='
-        "1&sos",    // 1 AND ''='
-        "so1o1",    // ' OR 1=1
-
+        "1&1o1", // 1 AND 1=1
+        "s&so1", // ' AND '='
+        "1&sos", // 1 AND ''='
+        "so1o1", // ' OR 1=1
         // Time-based
-        "kfE",      // SLEEP(5)
-        "kf1E",     // BENCHMARK(1000000,MD5('x'))
+        "kfE",  // SLEEP(5)
+        "kf1E", // BENCHMARK(1000000,MD5('x'))
     ]
     .iter()
     .cloned()
@@ -199,7 +344,6 @@ static SQLI_PATTERNS: Lazy<Vec<Regex>> = Lazy::new(|| {
         Regex::new(r"(?i)'\s*(or|and)\s+\w+\s*=").unwrap(),
         Regex::new(r"(?i)\d\s*(or|and)\s+\d\s*=\s*\d").unwrap(),
         Regex::new(r"(?i)'\s*=\s*'").unwrap(),
-
         // Tautologies (without backreferences)
         Regex::new(r"(?i)\b1\s*=\s*1\b").unwrap(),
         Regex::new(r"(?i)\b2\s*=\s*2\b").unwrap(),
@@ -207,43 +351,36 @@ static SQLI_PATTERNS: Lazy<Vec<Regex>> = Lazy::new(|| {
         Regex::new(r"(?i)\bor\s+'[^']*'\s*=\s*'[^']*'").unwrap(),
         Regex::new(r"(?i)\bor\s+true\b").unwrap(),
         Regex::new(r"(?i)\band\s+1\s*=\s*1").unwrap(),
-
         // UNION-based injection
         Regex::new(r"(?i)\bunion\s+(all\s+)?select\b").unwrap(),
         Regex::new(r"(?i)'\s*union\s+(all\s+)?select\b").unwrap(),
         Regex::new(r"(?i)\d\s+union\s+(all\s+)?select\b").unwrap(),
-
         // Comment injection
         Regex::new(r"(?i)'[^']*--").unwrap(),
         Regex::new(r"(?i)'[^']*/\*").unwrap(),
         Regex::new(r"(?i)\d\s*--").unwrap(),
         Regex::new(r"(?i)--\s*(select|drop|delete|update|insert|union)\b").unwrap(),
         Regex::new(r"/\*.*\*/").unwrap(),
-
         // Stacked queries
         Regex::new(r"(?i)';\s*(drop|delete|update|insert|select|exec|execute)\b").unwrap(),
         Regex::new(r"(?i)\d;\s*(drop|delete|update|insert|select|exec|execute)\b").unwrap(),
         Regex::new(r"(?i);\s*(drop|delete|truncate)\s+").unwrap(),
-
         // Time-based injection
         Regex::new(r"(?i)\b(sleep|benchmark|waitfor|delay|pg_sleep)\s*\(").unwrap(),
-
         // Error-based injection
         Regex::new(r"(?i)\b(extractvalue|updatexml|xmltype)\s*\(").unwrap(),
-
         // Dangerous keywords after quote
-        Regex::new(r"(?i)'\s*(select|insert|update|delete|drop|truncate|exec|execute|create|alter)\b").unwrap(),
-
+        Regex::new(
+            r"(?i)'\s*(select|insert|update|delete|drop|truncate|exec|execute|create|alter)\b",
+        )
+        .unwrap(),
         // Information gathering
         Regex::new(r"(?i)\b(information_schema|sys\.tables|sysobjects)\b").unwrap(),
-
         // Typical SQLi endings
         Regex::new(r"(?i)'\s*or\s*'").unwrap(),
         Regex::new(r"(?i)'\s*;\s*--").unwrap(),
-
         // Quote followed by logical operator
         Regex::new(r"(?i)'\s*(and|or|xor)\s").unwrap(),
-
         // Number followed by OR/AND
         Regex::new(r"(?i)\d\s+(or|and)\s+").unwrap(),
     ]
@@ -554,7 +691,9 @@ fn has_dangerous_patterns(tokens: &[Token]) -> bool {
 
     // Check for UNION SELECT
     for i in 0..upper_values.len().saturating_sub(1) {
-        if upper_values[i] == "UNION" && upper_values.get(i + 1).map(|s| s.as_str()) == Some("SELECT") {
+        if upper_values[i] == "UNION"
+            && upper_values.get(i + 1).map(|s| s.as_str()) == Some("SELECT")
+        {
             return true;
         }
     }

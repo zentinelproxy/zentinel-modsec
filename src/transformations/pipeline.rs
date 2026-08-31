@@ -110,18 +110,15 @@ mod tests {
 
     #[test]
     fn test_single_transformation() {
-        let pipeline =
-            TransformationPipeline::from_names(&["lowercase".to_string()]).unwrap();
+        let pipeline = TransformationPipeline::from_names(&["lowercase".to_string()]).unwrap();
         assert_eq!(pipeline.apply("HELLO"), "hello");
     }
 
     #[test]
     fn test_multiple_transformations() {
-        let pipeline = TransformationPipeline::from_names(&[
-            "urlDecode".to_string(),
-            "lowercase".to_string(),
-        ])
-        .unwrap();
+        let pipeline =
+            TransformationPipeline::from_names(&["urlDecode".to_string(), "lowercase".to_string()])
+                .unwrap();
         assert_eq!(pipeline.apply("HELLO%20WORLD"), "hello world");
     }
 

@@ -76,7 +76,10 @@ fn setvar_on_the_starter_only_applies_when_the_chain_completes() {
          SecRule REQUEST_METHOD \"@streq GET\"\n\
          SecRule TX:score \"@ge 5\" \"id:2,phase:1,deny\"";
 
-    assert!(blocked(rules, "/admin", "GET"), "complete chain should set the score");
+    assert!(
+        blocked(rules, "/admin", "GET"),
+        "complete chain should set the score"
+    );
     assert!(
         !blocked(rules, "/admin", "POST"),
         "partial chain match must not apply the starter's setvar"

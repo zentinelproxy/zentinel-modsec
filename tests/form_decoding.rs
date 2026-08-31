@@ -101,7 +101,10 @@ fn a_double_encoded_plus_is_not_over_decoded() {
 fn a_space_separated_payload_cannot_hide_behind_plus_encoding() {
     // The shape a CRS rule looks for; both encodings must be seen alike.
     let rule = r"(?i)\bunion\b.{1,100}?\bselect\b";
-    assert!(query(rule, "/u?id=1%20UNION%20SELECT%20password%20FROM%20users"));
+    assert!(query(
+        rule,
+        "/u?id=1%20UNION%20SELECT%20password%20FROM%20users"
+    ));
     assert!(query(rule, "/u?id=1+UNION+SELECT+password+FROM+users"));
     assert!(form(rule, b"id=1+UNION+SELECT+password+FROM+users"));
 }
@@ -133,7 +136,8 @@ fn a_json_body_keeps_its_pluses() {
     let m = ModSecurity::from_string(rules).unwrap();
     let mut tx = m.new_transaction();
     tx.process_uri("/g", "POST", "HTTP/1.1").unwrap();
-    tx.add_request_header("Content-Type", "application/json").unwrap();
+    tx.add_request_header("Content-Type", "application/json")
+        .unwrap();
     tx.process_request_headers().unwrap();
     tx.append_request_body(br#"{"foo":"a+b"}"#).unwrap();
     tx.process_request_body().unwrap();
@@ -146,7 +150,8 @@ fn an_xml_body_keeps_its_pluses() {
     let m = ModSecurity::from_string(rules).unwrap();
     let mut tx = m.new_transaction();
     tx.process_uri("/g", "POST", "HTTP/1.1").unwrap();
-    tx.add_request_header("Content-Type", "application/xml").unwrap();
+    tx.add_request_header("Content-Type", "application/xml")
+        .unwrap();
     tx.process_request_headers().unwrap();
     tx.append_request_body(b"<r><q>a+b</q></r>").unwrap();
     tx.process_request_body().unwrap();
@@ -156,12 +161,14 @@ fn an_xml_body_keeps_its_pluses() {
 #[test]
 fn the_request_uri_is_not_form_decoded() {
     // REQUEST_URI is the raw request target, not a form-encoded component.
-    let rules =
-        "SecRuleEngine On\nSecRule REQUEST_URI \"@rx \\+\" \"id:1,phase:2,deny,t:none\"";
+    let rules = "SecRuleEngine On\nSecRule REQUEST_URI \"@rx \\+\" \"id:1,phase:2,deny,t:none\"";
     let m = ModSecurity::from_string(rules).unwrap();
     let mut tx = m.new_transaction();
     tx.process_uri("/g?foo=a+b", "GET", "HTTP/1.1").unwrap();
     tx.process_request_headers().unwrap();
     tx.process_request_body().unwrap();
-    assert!(tx.has_intervention(), "REQUEST_URI should still contain the '+'");
+    assert!(
+        tx.has_intervention(),
+        "REQUEST_URI should still contain the '+'"
+    );
 }

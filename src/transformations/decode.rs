@@ -39,7 +39,7 @@ impl Transformation for UrlDecodeUni {
             if c == '%' {
                 if chars.peek() == Some(&'u') || chars.peek() == Some(&'U') {
                     chars.next(); // consume 'u'
-                    // Read 4 hex digits
+                                  // Read 4 hex digits
                     let mut hex = String::new();
                     for _ in 0..4 {
                         if let Some(h) = chars.next() {

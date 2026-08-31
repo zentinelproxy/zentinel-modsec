@@ -138,7 +138,10 @@ impl PmOperator {
                 message: e.to_string(),
             })?;
 
-        Ok(Self { automaton, patterns })
+        Ok(Self {
+            automaton,
+            patterns,
+        })
     }
 
     /// Create a phrase match operator from a file.
@@ -190,7 +193,10 @@ impl PmOperator {
                 message: e.to_string(),
             })?;
 
-        Ok(Self { automaton, patterns })
+        Ok(Self {
+            automaton,
+            patterns,
+        })
     }
 }
 

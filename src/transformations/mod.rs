@@ -76,7 +76,9 @@ pub fn create_transformation(name: &str) -> Result<Arc<dyn Transformation>> {
         }
         "sha256" => Ok(Arc::new(Sha256)),
 
-        _ => Err(Error::UnknownTransformation { name: name.to_string() }),
+        _ => Err(Error::UnknownTransformation {
+            name: name.to_string(),
+        }),
     }
 }
 

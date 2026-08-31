@@ -3,9 +3,9 @@
 //! Run with: cargo bench
 //! Compare with libmodsecurity: cargo bench --features libmodsec-compare
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId, Throughput};
-use zentinel_modsec::ModSecurity;
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use std::time::Duration;
+use zentinel_modsec::ModSecurity;
 
 // ============================================================================
 // Test Data
@@ -125,33 +125,23 @@ fn bench_rule_parsing(c: &mut Criterion) {
     let mut group = c.benchmark_group("parsing");
 
     group.bench_function("simple_rule", |b| {
-        b.iter(|| {
-            ModSecurity::from_string(black_box(SIMPLE_RULE)).unwrap()
-        })
+        b.iter(|| ModSecurity::from_string(black_box(SIMPLE_RULE)).unwrap())
     });
 
     group.bench_function("sqli_rule", |b| {
-        b.iter(|| {
-            ModSecurity::from_string(black_box(SQLI_RULE)).unwrap()
-        })
+        b.iter(|| ModSecurity::from_string(black_box(SQLI_RULE)).unwrap())
     });
 
     group.bench_function("xss_rule", |b| {
-        b.iter(|| {
-            ModSecurity::from_string(black_box(XSS_RULE)).unwrap()
-        })
+        b.iter(|| ModSecurity::from_string(black_box(XSS_RULE)).unwrap())
     });
 
     group.bench_function("complex_rule", |b| {
-        b.iter(|| {
-            ModSecurity::from_string(black_box(COMPLEX_RULE)).unwrap()
-        })
+        b.iter(|| ModSecurity::from_string(black_box(COMPLEX_RULE)).unwrap())
     });
 
     group.bench_function("chain_rule", |b| {
-        b.iter(|| {
-            ModSecurity::from_string(black_box(CHAIN_RULE)).unwrap()
-        })
+        b.iter(|| ModSecurity::from_string(black_box(CHAIN_RULE)).unwrap())
     });
 
     group.finish();
@@ -161,7 +151,10 @@ fn bench_crs_parsing(c: &mut Criterion) {
     // Only run if CRS is available
     let crs_path = "test-rules/crs/rules";
     if !std::path::Path::new(crs_path).exists() {
-        eprintln!("Skipping CRS parsing benchmark - rules not found at {}", crs_path);
+        eprintln!(
+            "Skipping CRS parsing benchmark - rules not found at {}",
+            crs_path
+        );
         return;
     }
 
@@ -188,9 +181,7 @@ fn bench_crs_parsing(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(10));
 
     group.bench_function("crs_subset", |b| {
-        b.iter(|| {
-            ModSecurity::from_string(black_box(&crs_content)).unwrap()
-        })
+        b.iter(|| ModSecurity::from_string(black_box(&crs_content)).unwrap())
     });
 
     group.finish();
@@ -222,7 +213,8 @@ fn bench_transaction_processing(c: &mut Criterion) {
     group.bench_function("clean_request", |b| {
         b.iter(|| {
             let mut tx = modsec.new_transaction();
-            tx.process_uri(black_box("/api/users"), "GET", "HTTP/1.1").unwrap();
+            tx.process_uri(black_box("/api/users"), "GET", "HTTP/1.1")
+                .unwrap();
             tx.add_request_header("Host", "example.com").unwrap();
             tx.add_request_header("User-Agent", "Mozilla/5.0").unwrap();
             tx.process_request_headers().unwrap();
@@ -235,7 +227,8 @@ fn bench_transaction_processing(c: &mut Criterion) {
     group.bench_function("sqli_request", |b| {
         b.iter(|| {
             let mut tx = modsec.new_transaction();
-            tx.process_uri(black_box(attack_uri), "GET", "HTTP/1.1").unwrap();
+            tx.process_uri(black_box(attack_uri), "GET", "HTTP/1.1")
+                .unwrap();
             tx.add_request_header("Host", "example.com").unwrap();
             tx.process_request_headers().unwrap();
             tx.process_request_body().unwrap();
@@ -253,9 +246,11 @@ fn bench_body_processing(c: &mut Criterion) {
     {
         let mut tx = modsec.new_transaction();
         tx.process_uri("/api/login", "POST", "HTTP/1.1").unwrap();
-        tx.add_request_header("Content-Type", "application/x-www-form-urlencoded").unwrap();
+        tx.add_request_header("Content-Type", "application/x-www-form-urlencoded")
+            .unwrap();
         tx.process_request_headers().unwrap();
-        tx.append_request_body(b"username=admin&password=' OR '1'='1' --").unwrap();
+        tx.append_request_body(b"username=admin&password=' OR '1'='1' --")
+            .unwrap();
         tx.process_request_body().unwrap();
         assert!(
             tx.intervention().is_some(),
@@ -269,22 +264,19 @@ fn bench_body_processing(c: &mut Criterion) {
         let body = generate_body(size, false);
         group.throughput(Throughput::Bytes(size as u64));
 
-        group.bench_with_input(
-            BenchmarkId::new("clean", size),
-            &body,
-            |b, body| {
-                b.iter(|| {
-                    let mut tx = modsec.new_transaction();
-                    tx.process_uri("/api/data", "POST", "HTTP/1.1").unwrap();
-                    tx.add_request_header("Host", "example.com").unwrap();
-                    tx.add_request_header("Content-Type", "application/x-www-form-urlencoded").unwrap();
-                    tx.process_request_headers().unwrap();
-                    tx.append_request_body(black_box(body.as_bytes())).unwrap();
-                    tx.process_request_body().unwrap();
-                    tx.intervention().is_some()
-                })
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("clean", size), &body, |b, body| {
+            b.iter(|| {
+                let mut tx = modsec.new_transaction();
+                tx.process_uri("/api/data", "POST", "HTTP/1.1").unwrap();
+                tx.add_request_header("Host", "example.com").unwrap();
+                tx.add_request_header("Content-Type", "application/x-www-form-urlencoded")
+                    .unwrap();
+                tx.process_request_headers().unwrap();
+                tx.append_request_body(black_box(body.as_bytes())).unwrap();
+                tx.process_request_body().unwrap();
+                tx.intervention().is_some()
+            })
+        });
     }
 
     // Test with attack payload in body
@@ -294,9 +286,11 @@ fn bench_body_processing(c: &mut Criterion) {
             let mut tx = modsec.new_transaction();
             tx.process_uri("/api/login", "POST", "HTTP/1.1").unwrap();
             tx.add_request_header("Host", "example.com").unwrap();
-            tx.add_request_header("Content-Type", "application/x-www-form-urlencoded").unwrap();
+            tx.add_request_header("Content-Type", "application/x-www-form-urlencoded")
+                .unwrap();
             tx.process_request_headers().unwrap();
-            tx.append_request_body(black_box(attack_body.as_bytes())).unwrap();
+            tx.append_request_body(black_box(attack_body.as_bytes()))
+                .unwrap();
             tx.process_request_body().unwrap();
             tx.intervention().is_some()
         })
@@ -310,7 +304,7 @@ fn bench_body_processing(c: &mut Criterion) {
 // ============================================================================
 
 fn bench_operators(c: &mut Criterion) {
-    use zentinel_modsec::operators::{Operator, create_operator};
+    use zentinel_modsec::operators::{create_operator, Operator};
     use zentinel_modsec::parser::OperatorName;
 
     let mut group = c.benchmark_group("operators");
@@ -368,7 +362,7 @@ fn bench_operators(c: &mut Criterion) {
 // ============================================================================
 
 fn bench_transformations(c: &mut Criterion) {
-    use zentinel_modsec::transformations::{Transformation, create_transformation};
+    use zentinel_modsec::transformations::{create_transformation, Transformation};
 
     let mut group = c.benchmark_group("transformations");
 

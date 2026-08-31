@@ -90,13 +90,23 @@ pub enum DataAction {
     /// Capture regex groups.
     Capture,
     /// Initialize collection.
-    InitCol { collection: String, key: String },
+    InitCol {
+        /// Collection to initialise (`ip`, `session`, `user`, ...).
+        collection: String,
+        /// Key the collection is keyed on for this transaction.
+        key: String,
+    },
     /// Set UID.
     SetUid(String),
     /// Set SID.
     SetSid(String),
     /// Expire variable.
-    ExpireVar { var: String, seconds: u64 },
+    ExpireVar {
+        /// Variable to expire, as written in the rule.
+        var: String,
+        /// Seconds from now at which it expires.
+        seconds: u64,
+    },
     /// Deprecate variable.
     DeprecateVar(String),
     /// Execute script.
@@ -217,13 +227,13 @@ pub fn parse_actions(input: &str) -> Result<Vec<Action>> {
     let normalized = normalize_line_continuations(input);
 
     let mut actions = Vec::new();
-    let mut chars = normalized.chars().peekable();
+    let chars = normalized.chars().peekable();
     let mut current = String::new();
     let mut in_quotes = false;
     let mut quote_char = '"';
     let mut paren_depth: u32 = 0;
 
-    while let Some(c) = chars.next() {
+    for c in chars {
         match c {
             '"' | '\'' if !in_quotes => {
                 in_quotes = true;
@@ -267,8 +277,8 @@ fn parse_single_action(input: &str) -> Result<Action> {
     let input = input.trim();
 
     // Check for transformation (t:xxx)
-    if input.starts_with("t:") {
-        return Ok(Action::Transformation(input[2..].to_string()));
+    if let Some(name) = input.strip_prefix("t:") {
+        return Ok(Action::Transformation(name.to_string()));
     }
 
     // Split on : for actions with arguments
@@ -340,7 +350,7 @@ fn parse_single_action(input: &str) -> Result<Action> {
             let sev: u8 = argument
                 .as_ref()
                 .map(|s| s.trim_matches(|c| c == '\'' || c == '"'))
-                .and_then(|s| parse_severity(s))
+                .and_then(parse_severity)
                 .ok_or_else(|| Error::InvalidActionArgument {
                     action: "severity".to_string(),
                     message: "invalid severity".to_string(),
@@ -515,8 +525,7 @@ fn parse_setvar(input: &str) -> Result<SetVarSpec> {
     };
 
     // Check for delete (!var)
-    if input.starts_with('!') {
-        let var = &input[1..];
+    if let Some(var) = input.strip_prefix('!') {
         let (collection, key) = parse_var_name(var)?;
         return Ok(SetVarSpec {
             collection,
@@ -539,13 +548,13 @@ fn parse_setvar(input: &str) -> Result<SetVarSpec> {
             // Contains a macro (e.g. +%{tx.critical_anomaly_score}); defer the
             // sign/value interpretation until the macro is expanded at apply time.
             SetVarValue::Macro(val.to_string())
-        } else if val.starts_with('+') {
+        } else if let Some(rest) = val.strip_prefix('+') {
             // Increment
-            let amount: i64 = val[1..].parse().unwrap_or(1);
+            let amount: i64 = rest.parse().unwrap_or(1);
             SetVarValue::Increment(amount)
-        } else if val.starts_with('-') {
+        } else if let Some(rest) = val.strip_prefix('-') {
             // Decrement
-            let amount: i64 = val[1..].parse().unwrap_or(1);
+            let amount: i64 = rest.parse().unwrap_or(1);
             SetVarValue::Decrement(amount)
         } else if let Ok(n) = val.parse::<i64>() {
             SetVarValue::Int(n)

@@ -1,7 +1,6 @@
 //! Comparison operators (@contains, @eq, @gt, etc.).
 
 use super::traits::{Operator, OperatorResult};
-use crate::error::{Error, Result};
 
 /// Contains operator (@contains).
 pub struct ContainsOperator {
@@ -9,6 +8,7 @@ pub struct ContainsOperator {
 }
 
 impl ContainsOperator {
+    /// Create the operator from its SecLang argument.
     pub fn new(needle: &str) -> Self {
         Self {
             needle: needle.to_string(),
@@ -36,6 +36,7 @@ pub struct BeginsWithOperator {
 }
 
 impl BeginsWithOperator {
+    /// Create the operator from its SecLang argument.
     pub fn new(prefix: &str) -> Self {
         Self {
             prefix: prefix.to_string(),
@@ -63,6 +64,7 @@ pub struct EndsWithOperator {
 }
 
 impl EndsWithOperator {
+    /// Create the operator from its SecLang argument.
     pub fn new(suffix: &str) -> Self {
         Self {
             suffix: suffix.to_string(),
@@ -90,6 +92,7 @@ pub struct StreqOperator {
 }
 
 impl StreqOperator {
+    /// Create the operator from its SecLang argument.
     pub fn new(expected: &str) -> Self {
         Self {
             expected: expected.to_string(),
@@ -119,6 +122,7 @@ pub struct EqOperator {
 }
 
 impl EqOperator {
+    /// Create the operator from its SecLang argument.
     pub fn new(value: &str) -> Self {
         Self {
             arg: value.to_string(),
@@ -159,6 +163,7 @@ pub struct GtOperator {
 }
 
 impl GtOperator {
+    /// Create the operator from its SecLang argument.
     pub fn new(value: &str) -> Self {
         Self {
             arg: value.to_string(),
@@ -196,6 +201,7 @@ pub struct LtOperator {
 }
 
 impl LtOperator {
+    /// Create the operator from its SecLang argument.
     pub fn new(value: &str) -> Self {
         Self {
             arg: value.to_string(),
@@ -233,6 +239,7 @@ pub struct GeOperator {
 }
 
 impl GeOperator {
+    /// Create the operator from its SecLang argument.
     pub fn new(value: &str) -> Self {
         Self {
             arg: value.to_string(),
@@ -270,6 +277,7 @@ pub struct LeOperator {
 }
 
 impl LeOperator {
+    /// Create the operator from its SecLang argument.
     pub fn new(value: &str) -> Self {
         Self {
             arg: value.to_string(),

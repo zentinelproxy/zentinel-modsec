@@ -6,13 +6,21 @@ use super::RuleMetadata;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum Severity {
+    /// Severity 0 — the system is unusable.
     Emergency = 0,
+    /// Severity 1 — action must be taken immediately.
     Alert = 1,
+    /// Severity 2 — a critical condition. CRS scores these highest.
     Critical = 2,
+    /// Severity 3 — an error condition.
     Error = 3,
+    /// Severity 4 — a warning condition.
     Warning = 4,
+    /// Severity 5 — normal but significant.
     Notice = 5,
+    /// Severity 6 — informational.
     Info = 6,
+    /// Severity 7 — debug-level message.
     Debug = 7,
 }
 

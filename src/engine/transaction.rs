@@ -1062,7 +1062,7 @@ mod tests {
 
     #[test]
     fn test_detection_only_mode() {
-        let ruleset = make_ruleset(
+        let _ruleset = make_ruleset(
             r#"
             SecRuleEngine DetectionOnly
             SecRule REQUEST_URI "@contains /admin" "id:1,phase:1,deny"

@@ -77,7 +77,7 @@ pub fn evaluate_chain<F>(
 where
     F: FnMut(&CompiledRule) -> Option<(bool, Vec<String>)>,
 {
-    let mut state = ChainState::new();
+    let _state = ChainState::new();
     let mut idx = start_idx;
     let mut all_captures = Vec::new();
 

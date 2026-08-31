@@ -46,7 +46,7 @@ fn exclusion_applies_regardless_of_directive_order() {
     // ModSecurity also accepts the directive before its target rule.
     let after = format!("{BASE_RULE}\nSecRuleUpdateTargetById 942100 \"!ARGS:password\"");
     let before =
-        format!("SecRuleEngine On\nSecRuleUpdateTargetById 942100 \"!ARGS:password\"\nSecRule ARGS \"@contains secret\" \"id:942100,phase:2,deny\"");
+        "SecRuleEngine On\nSecRuleUpdateTargetById 942100 \"!ARGS:password\"\nSecRule ARGS \"@contains secret\" \"id:942100,phase:2,deny\"".to_string();
 
     assert!(!blocked(&after, "/login?password=secret"));
     assert!(!blocked(&before, "/login?password=secret"));

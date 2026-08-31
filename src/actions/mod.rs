@@ -133,8 +133,10 @@ pub fn execute_actions(
     matched_value: Option<&str>,
     captures: &[String],
 ) -> ActionResult {
-    let mut result = ActionResult::default();
-    result.captures = captures.to_vec();
+    let mut result = ActionResult {
+        captures: captures.to_vec(),
+        ..Default::default()
+    };
 
     for action in actions {
         match action {

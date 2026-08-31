@@ -74,14 +74,13 @@ fn is_valid_utf8_sequence(s: &str) -> bool {
 
     // Check for overlong encoded sequences by looking for specific patterns
     // that would have been decoded incorrectly
-    let bytes = s.as_bytes();
-    for i in 0..bytes.len() {
+    for &byte in s.as_bytes() {
         // Check for sequences that look like they were overlong encoded
-        if bytes[i] == 0xC0 || bytes[i] == 0xC1 {
+        if byte == 0xC0 || byte == 0xC1 {
             // These lead bytes are always overlong
             return false;
         }
-        if bytes[i] >= 0xF5 {
+        if byte >= 0xF5 {
             // Invalid lead bytes
             return false;
         }

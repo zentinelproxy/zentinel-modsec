@@ -15,7 +15,7 @@ pub use pattern::{PmOperator, RxOperator};
 pub use traits::{Operator, OperatorResult};
 pub use validation::{ValidateUrlEncodingOperator, ValidateUtf8EncodingOperator};
 
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::parser::{OperatorName, OperatorSpec};
 use std::sync::Arc;
 
@@ -78,9 +78,6 @@ pub fn compile_operator(spec: &OperatorSpec) -> Result<Arc<dyn Operator>> {
         OperatorName::Within => Ok(Arc::new(WithinOperator::new(argument))),
         OperatorName::StrMatch => Ok(Arc::new(ContainsOperator::new(argument))),
         OperatorName::Ne => Ok(Arc::new(NeOperator::new(argument))),
-        _ => Err(Error::UnknownOperator {
-            name: format!("{:?}", name),
-        }),
     }
 }
 

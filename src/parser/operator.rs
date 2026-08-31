@@ -163,6 +163,10 @@ static OPERATOR_MAP: phf::Map<&'static str, OperatorName> = phf_map! {
 
 impl OperatorName {
     /// Parse an operator name from a string (O(1) lookup).
+    // Not `std::str::FromStr`: an unrecognised SecLang token is a plain
+    // `None` here, not a parse error with a payload, and callers branch on
+    // that. Implementing the trait would force an error type nobody uses.
+    #[allow(clippy::should_implement_trait)]
     #[inline]
     pub fn from_str(s: &str) -> Option<Self> {
         // Fast path: check if already lowercase ASCII
@@ -209,10 +213,8 @@ pub fn parse_operator(input: &str) -> Result<OperatorSpec> {
     };
 
     // Check for @ prefix
-    if input.starts_with('@') {
+    if let Some(rest) = input.strip_prefix('@') {
         // Find the operator name and argument
-        let rest = &input[1..];
-
         // Find the end of the operator name (first space or end)
         let space_pos = rest.bytes().position(|b| b.is_ascii_whitespace());
         let (name_str, argument) = match space_pos {

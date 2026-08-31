@@ -9,7 +9,7 @@
 
 #![cfg(feature = "libmodsec-compare")]
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int, c_void};
 use std::time::Duration;
@@ -336,7 +336,9 @@ fn bench_parsing_comparison(c: &mut Criterion) {
 
     // zentinel-modsec
     group.bench_function("zentinel/simple_rule", |b| {
-        b.iter(|| zentinel_modsec::ModSecurity::from_string(black_box(SIMPLE_RULE)).unwrap())
+        b.iter(|| {
+            zentinel_modsec::ModSecurity::from_string(std::hint::black_box(SIMPLE_RULE)).unwrap()
+        })
     });
 
     // libmodsecurity
@@ -344,7 +346,7 @@ fn bench_parsing_comparison(c: &mut Criterion) {
         let msc = LibModSecurity::new();
         b.iter(|| {
             let rules = LibRules::new();
-            rules.add_rules(black_box(SIMPLE_RULE)).unwrap();
+            rules.add_rules(std::hint::black_box(SIMPLE_RULE)).unwrap();
             drop(rules);
         });
         drop(msc);
@@ -352,14 +354,16 @@ fn bench_parsing_comparison(c: &mut Criterion) {
 
     // Complex rule
     group.bench_function("zentinel/complex_rule", |b| {
-        b.iter(|| zentinel_modsec::ModSecurity::from_string(black_box(COMPLEX_RULE)).unwrap())
+        b.iter(|| {
+            zentinel_modsec::ModSecurity::from_string(std::hint::black_box(COMPLEX_RULE)).unwrap()
+        })
     });
 
     group.bench_function("libmodsec/complex_rule", |b| {
         let msc = LibModSecurity::new();
         b.iter(|| {
             let rules = LibRules::new();
-            rules.add_rules(black_box(COMPLEX_RULE)).unwrap();
+            rules.add_rules(std::hint::black_box(COMPLEX_RULE)).unwrap();
             drop(rules);
         });
         drop(msc);
@@ -389,7 +393,7 @@ fn bench_transaction_comparison(c: &mut Criterion) {
     group.bench_function("zentinel/clean_request", |b| {
         b.iter(|| {
             let mut tx = zentinel.new_transaction();
-            tx.process_uri(black_box("/api/users"), "GET", "HTTP/1.1")
+            tx.process_uri(std::hint::black_box("/api/users"), "GET", "HTTP/1.1")
                 .unwrap();
             tx.add_request_header("Host", "example.com").unwrap();
             tx.process_request_headers().unwrap();
@@ -402,7 +406,7 @@ fn bench_transaction_comparison(c: &mut Criterion) {
     group.bench_function("libmodsec/clean_request", |b| {
         b.iter(|| {
             let tx = LibTransaction::new(&libmsc, &librules);
-            tx.process_uri(black_box("/api/users"), "GET", "HTTP/1.1");
+            tx.process_uri(std::hint::black_box("/api/users"), "GET", "HTTP/1.1");
             tx.add_request_header("Host", "example.com");
             tx.process_request_headers();
             tx.process_request_body();
@@ -414,7 +418,7 @@ fn bench_transaction_comparison(c: &mut Criterion) {
     group.bench_function("zentinel/sqli_request", |b| {
         b.iter(|| {
             let mut tx = zentinel.new_transaction();
-            tx.process_uri(black_box(attack_uri), "GET", "HTTP/1.1")
+            tx.process_uri(std::hint::black_box(attack_uri), "GET", "HTTP/1.1")
                 .unwrap();
             tx.add_request_header("Host", "example.com").unwrap();
             tx.process_request_headers().unwrap();
@@ -427,7 +431,7 @@ fn bench_transaction_comparison(c: &mut Criterion) {
     group.bench_function("libmodsec/sqli_request", |b| {
         b.iter(|| {
             let tx = LibTransaction::new(&libmsc, &librules);
-            tx.process_uri(black_box(attack_uri), "GET", "HTTP/1.1");
+            tx.process_uri(std::hint::black_box(attack_uri), "GET", "HTTP/1.1");
             tx.add_request_header("Host", "example.com");
             tx.process_request_headers();
             tx.process_request_body();
@@ -486,7 +490,7 @@ fn bench_body_comparison(c: &mut Criterion) {
             tx.add_request_header("Content-Type", "application/x-www-form-urlencoded")
                 .unwrap();
             tx.process_request_headers().unwrap();
-            tx.append_request_body(black_box(body)).unwrap();
+            tx.append_request_body(std::hint::black_box(body)).unwrap();
             tx.process_request_body().unwrap();
             tx.intervention().is_some()
         })
@@ -500,7 +504,7 @@ fn bench_body_comparison(c: &mut Criterion) {
             tx.add_request_header("Host", "example.com");
             tx.add_request_header("Content-Type", "application/x-www-form-urlencoded");
             tx.process_request_headers();
-            tx.append_request_body(black_box(body));
+            tx.append_request_body(std::hint::black_box(body));
             tx.process_request_body();
             tx.intervention()
         })
@@ -534,7 +538,8 @@ fn bench_throughput_comparison(c: &mut Criterion) {
             idx += 1;
 
             let mut tx = zentinel.new_transaction();
-            tx.process_uri(black_box(uri), method, "HTTP/1.1").unwrap();
+            tx.process_uri(std::hint::black_box(uri), method, "HTTP/1.1")
+                .unwrap();
             tx.add_request_header("Host", "example.com").unwrap();
             tx.process_request_headers().unwrap();
             tx.process_request_body().unwrap();
@@ -550,7 +555,7 @@ fn bench_throughput_comparison(c: &mut Criterion) {
             idx += 1;
 
             let tx = LibTransaction::new(&libmsc, &librules);
-            tx.process_uri(black_box(uri), method, "HTTP/1.1");
+            tx.process_uri(std::hint::black_box(uri), method, "HTTP/1.1");
             tx.add_request_header("Host", "example.com");
             tx.process_request_headers();
             tx.process_request_body();
@@ -566,7 +571,8 @@ fn bench_throughput_comparison(c: &mut Criterion) {
             idx += 1;
 
             let mut tx = zentinel.new_transaction();
-            tx.process_uri(black_box(uri), "GET", "HTTP/1.1").unwrap();
+            tx.process_uri(std::hint::black_box(uri), "GET", "HTTP/1.1")
+                .unwrap();
             tx.add_request_header("Host", "example.com").unwrap();
             tx.process_request_headers().unwrap();
             tx.process_request_body().unwrap();
@@ -582,7 +588,7 @@ fn bench_throughput_comparison(c: &mut Criterion) {
             idx += 1;
 
             let tx = LibTransaction::new(&libmsc, &librules);
-            tx.process_uri(black_box(uri), "GET", "HTTP/1.1");
+            tx.process_uri(std::hint::black_box(uri), "GET", "HTTP/1.1");
             tx.add_request_header("Host", "example.com");
             tx.process_request_headers();
             tx.process_request_body();

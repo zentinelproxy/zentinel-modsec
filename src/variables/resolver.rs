@@ -81,6 +81,41 @@ impl<'a> VariableResolver<'a> {
             VariableName::RequestFilename => {
                 vec![("REQUEST_FILENAME".to_string(), self.request.path.clone())]
             }
+            VariableName::RequestLine => {
+                // The request line as it arrived. CRS 920100 tests this with a
+                // negated regex, so leaving it unresolved made that rule match
+                // every request rather than none.
+                let uri = if self.request.uri_raw.is_empty() {
+                    &self.request.uri
+                } else {
+                    &self.request.uri_raw
+                };
+                vec![(
+                    "REQUEST_LINE".to_string(),
+                    format!("{} {} {}", self.request.method, uri, self.request.protocol),
+                )]
+            }
+            VariableName::RequestBasename => {
+                // Final path segment. ModSecurity splits on both separators, so
+                // a Windows-style path does not hide the basename.
+                let basename = self
+                    .request
+                    .path
+                    .rsplit(['/', '\\'])
+                    .next()
+                    .unwrap_or("")
+                    .to_string();
+                vec![("REQUEST_BASENAME".to_string(), basename)]
+            }
+            VariableName::ArgsCombinedSize => {
+                use super::collection::Collection;
+                let size: usize = [&self.request.args_get, &self.request.args_post]
+                    .iter()
+                    .flat_map(|c| c.all())
+                    .map(|(name, value)| name.len() + value.len())
+                    .sum();
+                vec![("ARGS_COMBINED_SIZE".to_string(), size.to_string())]
+            }
             VariableName::RequestBody => {
                 vec![("REQUEST_BODY".to_string(), self.request.body_str())]
             }

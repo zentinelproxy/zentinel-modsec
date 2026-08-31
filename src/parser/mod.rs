@@ -28,7 +28,7 @@ pub use lexer::{Lexer, Token, TokenKind};
 pub use directive::{
     Directive, RuleEngineMode, RuleIdSelector, SecAction, SecMarker, SecRule, UpdateTargetById,
 };
-pub use variable::{VariableSpec, VariableName, Selection};
+pub use variable::{VariableSpec, VariableName, Selection, XmlTarget};
 pub(crate) use variable::parse_single_variable;
 pub use operator::{OperatorSpec, OperatorName};
 pub use action::{Action, DisruptiveAction, FlowAction, MetadataAction, DataAction, LoggingAction, ControlAction, SetVarSpec, SetVarValue, parse_actions};

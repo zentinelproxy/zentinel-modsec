@@ -1,7 +1,7 @@
 //! Variable resolution engine.
 
 use super::{RequestData, ResponseData, TxCollection};
-use crate::parser::{Selection, VariableName, VariableSpec};
+use crate::parser::{Selection, VariableName, VariableSpec, XmlTarget};
 use regex::Regex;
 
 /// Variable resolver for transaction context.
@@ -232,6 +232,8 @@ impl<'a> VariableResolver<'a> {
             }
 
             // TX collection
+            VariableName::Xml => self.resolve_xml(selection),
+
             VariableName::Tx => self.resolve_tx_collection(selection),
 
             // Client/Server info
@@ -346,6 +348,47 @@ impl<'a> VariableResolver<'a> {
     }
 
     /// Resolve ARGS collection (GET + POST combined).
+    /// Resolve an `XML:` target against the flattened XML body.
+    ///
+    /// The XML body processor flattens element text to `xml.<path>` and
+    /// attributes to `xml.<path>.@<name>` in `ARGS`. `XML:/*` and `XML://@*`
+    /// are exactly those two sets, so they are answered from the flattening
+    /// rather than by evaluating XPath.
+    ///
+    /// Values are reported under their XPath-style name -- `xml.order.item.@id`
+    /// is reported as `XML:/order/item/@id` -- so `%{MATCHED_VAR_NAME}` in a
+    /// rule's `logdata` names the node the way the rule addressed it.
+    fn resolve_xml(&self, selection: &Option<Selection>) -> Vec<(String, String)> {
+        use super::collection::Collection;
+
+        let Some(target) = XmlTarget::from_selection(selection.as_ref()) else {
+            // An XPath expression this engine cannot express. Reported when the
+            // rules load, so there is nothing to say per request.
+            return vec![];
+        };
+
+        self.request
+            .args_post
+            .all()
+            .into_iter()
+            .filter_map(|(name, value)| {
+                let path = name.strip_prefix("xml.")?;
+                // An XML element name cannot begin with `@`, so `.@` only ever
+                // marks the attribute segment this processor appends.
+                let is_attribute = path.contains(".@");
+                let wanted = match target {
+                    XmlTarget::Elements => !is_attribute,
+                    XmlTarget::Attributes => is_attribute,
+                    XmlTarget::All => true,
+                };
+                if !wanted {
+                    return None;
+                }
+                Some((format!("XML:/{}", path.replace('.', "/")), value.to_string()))
+            })
+            .collect()
+    }
+
     fn resolve_collection_from_all_args(&self, selection: &Option<Selection>) -> Vec<(String, String)> {
         let mut result = self.resolve_collection(&self.request.args_get, "ARGS", selection);
         result.extend(self.resolve_collection(&self.request.args_post, "ARGS", selection));

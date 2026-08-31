@@ -5,7 +5,7 @@ use crate::operators::{compile_operator, Operator};
 use crate::parser::{
     Action, Directive, FlowAction, MetadataAction, OperatorName, OperatorSpec, Parser,
     RuleEngineMode as ParserRuleEngineMode, RuleIdSelector, Selection, UpdateTargetById,
-    VariableSpec,
+    VariableName, VariableSpec, XmlTarget,
 };
 use crate::transformations::TransformationPipeline;
 
@@ -455,6 +455,8 @@ fn variable_matches_target(var: &VariableSpec, target: &str) -> bool {
 /// writes `ARGS|ARGS_NAMES|XML:/*`, where the unsupported target costs nothing
 /// because the rule still inspects the others.
 fn report_unimplemented_variables(variables: &[VariableSpec], rule_id: &Option<String>) {
+    report_unsupported_xml_selectors(variables, rule_id);
+
     if variables.is_empty() || variables.iter().any(|v| v.name.is_implemented()) {
         return;
     }
@@ -465,6 +467,36 @@ fn report_unimplemented_variables(variables: &[VariableSpec], rule_id: &Option<S
         "rule targets only variables this engine does not implement and can \
          never match; the rest of the ruleset was loaded"
     );
+}
+
+/// Warn about `XML:` targets that name an XPath expression this engine cannot
+/// express.
+///
+/// `XML:/*` and `XML://@*` are answered from the flattened body and cover every
+/// `XML:` target in the stock OWASP CRS. Anything richer needs a real XPath
+/// evaluator, and a rule asking for one inspects nothing through that target --
+/// worth saying at load time rather than leaving to be inferred from traffic.
+fn report_unsupported_xml_selectors(variables: &[VariableSpec], rule_id: &Option<String>) {
+    for var in variables {
+        if var.name != VariableName::Xml {
+            continue;
+        }
+        if XmlTarget::from_selection(var.selection.as_ref()).is_some() {
+            continue;
+        }
+        let selector = match &var.selection {
+            Some(Selection::Key(k)) => k.clone(),
+            Some(Selection::Regex(r)) => format!("/{r}/"),
+            None => String::new(),
+        };
+        tracing::warn!(
+            rule_id = %rule_id.as_deref().unwrap_or("(no id)"),
+            selector = %selector,
+            "rule selects XML with an XPath expression this engine cannot \
+             evaluate; only XML:/* and XML://@* are supported, and this target \
+             will match nothing"
+        );
+    }
 }
 
 fn compile_operator_reporting(

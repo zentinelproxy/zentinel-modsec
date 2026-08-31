@@ -5,7 +5,7 @@ use crate::operators::{compile_operator, Operator};
 use crate::parser::{
     Action, Directive, FlowAction, MetadataAction, OperatorName, OperatorSpec, Parser,
     RuleEngineMode as ParserRuleEngineMode, RuleIdSelector, Selection, UpdateTargetById,
-    VariableSpec,
+    VariableName, VariableSpec, XmlTarget,
 };
 use crate::transformations::TransformationPipeline;
 
@@ -54,8 +54,11 @@ impl std::fmt::Debug for CompiledRule {
 pub struct Rules {
     /// Rules organized by phase.
     by_phase: HashMap<Phase, Vec<CompiledRule>>,
-    /// Markers for skipAfter.
-    markers: HashMap<String, (Phase, usize)>,
+    /// Markers for skipAfter, as the index the marker occupies in *each*
+    /// phase's rule list. A marker separates rules in every phase, not only in
+    /// the phase of the rules written around it, so a phase-2 `skipAfter` must
+    /// be able to resume at the phase-2 position of the same marker.
+    markers: HashMap<String, HashMap<Phase, usize>>,
 }
 
 impl Rules {
@@ -72,9 +75,13 @@ impl Rules {
         self.by_phase.entry(phase).or_default().push(rule);
     }
 
-    /// Add a marker.
-    pub fn add_marker(&mut self, name: String, phase: Phase, index: usize) {
-        self.markers.insert(name, (phase, index));
+    /// Record a marker at the current end of every phase's rule list.
+    pub fn add_marker(&mut self, name: String) {
+        let positions = Phase::ALL
+            .iter()
+            .map(|&phase| (phase, self.by_phase.get(&phase).map_or(0, |v| v.len())))
+            .collect();
+        self.markers.insert(name, positions);
     }
 
     /// Get rules for a phase.
@@ -82,9 +89,9 @@ impl Rules {
         self.by_phase.get(&phase).map(|v| v.as_slice()).unwrap_or(&[])
     }
 
-    /// Get marker position.
-    pub fn marker(&self, name: &str) -> Option<(Phase, usize)> {
-        self.markers.get(name).copied()
+    /// Get a marker's position within one phase.
+    pub fn marker(&self, name: &str, phase: Phase) -> Option<usize> {
+        self.markers.get(name).and_then(|p| p.get(&phase)).copied()
     }
 
     /// Get total rule count.
@@ -213,6 +220,8 @@ impl CompiledRuleset {
 
                     let transformations = extract_transformations(&rule.actions)?;
 
+                    report_unimplemented_variables(&rule.variables, &id);
+
                     let operator_spec = rule.operator.clone();
                     let (operator, operator_negated) =
                         compile_operator_reporting(&rule.operator, &id)?;
@@ -286,10 +295,7 @@ impl CompiledRuleset {
                     target_updates.push(update.clone());
                 }
                 Directive::SecMarker(marker) => {
-                    // Add marker at current position in default phase
-                    let phase = Phase::RequestHeaders;
-                    let idx = ruleset.rules.by_phase.get(&phase).map(|v| v.len()).unwrap_or(0);
-                    ruleset.rules.add_marker(marker.name, phase, idx);
+                    ruleset.rules.add_marker(marker.name);
                 }
                 _ => {
                     // Other directives (SecDefaultAction, etc.) handled elsewhere
@@ -317,9 +323,9 @@ impl CompiledRuleset {
         self.engine_mode
     }
 
-    /// Get marker position.
-    pub fn marker(&self, name: &str) -> Option<(Phase, usize)> {
-        self.rules.marker(name)
+    /// Get a marker's position within one phase.
+    pub fn marker(&self, name: &str, phase: Phase) -> Option<usize> {
+        self.rules.marker(name, phase)
     }
 }
 
@@ -436,6 +442,63 @@ fn variable_matches_target(var: &VariableSpec, target: &str) -> bool {
 /// operator keeps failing the load, as it did before: those arguments come
 /// from the same config the operator is editing, not from a third-party
 /// ruleset.
+/// Warn about rule targets this engine parses but cannot resolve.
+///
+/// Such a variable always resolves to nothing, so the rule is dead. Under a
+/// negated operator it used to be worse than dead: an empty result was reported
+/// as a match, so `SecRule REQUEST_LINE "!@rx ..."` -- CRS 920100 -- denied
+/// every request. The evaluator no longer inverts absence into a match, but a
+/// rule that can never fire is still worth saying out loud at load time rather
+/// than leaving it to be inferred from traffic that was never inspected.
+///
+/// Only rules whose targets are *all* unresolvable are reported. CRS routinely
+/// writes `ARGS|ARGS_NAMES|XML:/*`, where the unsupported target costs nothing
+/// because the rule still inspects the others.
+fn report_unimplemented_variables(variables: &[VariableSpec], rule_id: &Option<String>) {
+    report_unsupported_xml_selectors(variables, rule_id);
+
+    if variables.is_empty() || variables.iter().any(|v| v.name.is_implemented()) {
+        return;
+    }
+    let targets: Vec<String> = variables.iter().map(|v| format!("{:?}", v.name)).collect();
+    tracing::warn!(
+        rule_id = %rule_id.as_deref().unwrap_or("(no id)"),
+        targets = %targets.join("|"),
+        "rule targets only variables this engine does not implement and can \
+         never match; the rest of the ruleset was loaded"
+    );
+}
+
+/// Warn about `XML:` targets that name an XPath expression this engine cannot
+/// express.
+///
+/// `XML:/*` and `XML://@*` are answered from the flattened body and cover every
+/// `XML:` target in the stock OWASP CRS. Anything richer needs a real XPath
+/// evaluator, and a rule asking for one inspects nothing through that target --
+/// worth saying at load time rather than leaving to be inferred from traffic.
+fn report_unsupported_xml_selectors(variables: &[VariableSpec], rule_id: &Option<String>) {
+    for var in variables {
+        if var.name != VariableName::Xml {
+            continue;
+        }
+        if XmlTarget::from_selection(var.selection.as_ref()).is_some() {
+            continue;
+        }
+        let selector = match &var.selection {
+            Some(Selection::Key(k)) => k.clone(),
+            Some(Selection::Regex(r)) => format!("/{r}/"),
+            None => String::new(),
+        };
+        tracing::warn!(
+            rule_id = %rule_id.as_deref().unwrap_or("(no id)"),
+            selector = %selector,
+            "rule selects XML with an XPath expression this engine cannot \
+             evaluate; only XML:/* and XML://@* are supported, and this target \
+             will match nothing"
+        );
+    }
+}
+
 fn compile_operator_reporting(
     spec: &OperatorSpec,
     rule_id: &Option<String>,

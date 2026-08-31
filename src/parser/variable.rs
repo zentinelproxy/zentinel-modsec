@@ -80,6 +80,91 @@ pub enum VariableName {
     MultipartStrictCheck,
 }
 
+/// Which part of a flattened XML body an `XML:` selector refers to.
+///
+/// ModSecurity selects XML through XPath. This engine has no XPath evaluator
+/// and flattens XML bodies into `ARGS` instead, but the two selectors the OWASP
+/// CRS actually writes -- `XML:/*` for element content and `XML://@*` for
+/// attributes -- map onto that flattening exactly, and between them account for
+/// every `XML:` target in the stock rule set. Resolving those two costs nothing
+/// at request time and needs no XPath engine.
+///
+/// Anything else is genuinely unsupported and is reported when the rules load,
+/// rather than resolving to nothing and leaving the rule silently dead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum XmlTarget {
+    /// `XML:/*` -- element text.
+    Elements,
+    /// `XML://@*` -- attribute values.
+    Attributes,
+    /// A bare `XML` with no selector: everything extracted from the body.
+    All,
+}
+
+impl XmlTarget {
+    /// Interpret an `XML:` selector, or `None` if this engine cannot express it.
+    pub fn from_selection(selection: Option<&Selection>) -> Option<Self> {
+        match selection {
+            None => Some(XmlTarget::All),
+            Some(Selection::Key(sel)) => match sel.trim() {
+                "/*" => Some(XmlTarget::Elements),
+                "//@*" => Some(XmlTarget::Attributes),
+                _ => None,
+            },
+            // `XML:/foo/` parses as a regex selection because of the
+            // delimiters, but an XPath expression is not a key regex.
+            Some(Selection::Regex(_)) => None,
+        }
+    }
+}
+
+impl VariableName {
+    /// Whether the resolver can produce a value for this variable.
+    ///
+    /// A variable the parser accepts but the resolver has no arm for silently
+    /// resolves to nothing, which makes a rule targeting it dead. Callers use
+    /// this to say so at load time instead of leaving it to be discovered from
+    /// traffic. The match is deliberately exhaustive: a new variant will not
+    /// compile until it has been classified here.
+    pub fn is_implemented(&self) -> bool {
+        match self {
+            VariableName::Xml | VariableName::Args | VariableName::ArgsGet | VariableName::ArgsPost |
+            VariableName::ArgsNames | VariableName::ArgsGetNames | VariableName::ArgsPostNames |
+            VariableName::ArgsCombinedSize | VariableName::RequestUri | VariableName::RequestUriRaw |
+            VariableName::RequestFilename | VariableName::RequestBasename | VariableName::RequestLine |
+            VariableName::RequestMethod | VariableName::RequestProtocol | VariableName::RequestHeaders |
+            VariableName::RequestHeadersNames | VariableName::RequestCookies | VariableName::RequestCookiesNames |
+            VariableName::RequestBody | VariableName::RequestBodyLength | VariableName::QueryString |
+            VariableName::ResponseStatus | VariableName::ResponseHeaders | VariableName::ResponseBody |
+            VariableName::ResponseContentType | VariableName::RemoteAddr | VariableName::RemotePort |
+            VariableName::ServerAddr | VariableName::ServerPort | VariableName::ServerName |
+            VariableName::Tx | VariableName::MatchedVar | VariableName::MatchedVars |
+            VariableName::MatchedVarName | VariableName::MatchedVarsNames | VariableName::Files |
+            VariableName::FilesNames | VariableName::MultipartPartHeaders | VariableName::ReqBodyProcessor |
+            VariableName::ReqBodyError | VariableName::ReqBodyErrorMsg | VariableName::ReqBodyProcessorError |
+            VariableName::ReqBodyProcessorErrorMsg => true,
+
+            VariableName::ResponseProtocol | VariableName::ResponseHeadersNames | VariableName::ResponseContentLength |
+            VariableName::RemoteHost | VariableName::RemoteUser | VariableName::Session |
+            VariableName::Env | VariableName::Ip | VariableName::Global |
+            VariableName::Resource | VariableName::User | VariableName::Geo |
+            VariableName::Time | VariableName::TimeEpoch | VariableName::TimeDay |
+            VariableName::TimeHour | VariableName::TimeMin | VariableName::TimeSec |
+            VariableName::TimeWday | VariableName::TimeMon | VariableName::TimeYear |
+            VariableName::FilesSizes | VariableName::FilesTmpnames | VariableName::FilesCombinedSize |
+            VariableName::UniqueId | VariableName::InboundAnomalyScore | VariableName::OutboundAnomalyScore |
+            VariableName::Duration | VariableName::MultipartBoundaryQuoted | VariableName::MultipartBoundaryWhitespace |
+            VariableName::MultipartDataAfter | VariableName::MultipartDataBefore | VariableName::MultipartFileLimitExceeded |
+            VariableName::MultipartHeaderFolding | VariableName::MultipartInvalidHeaderFolding | VariableName::MultipartInvalidPart |
+            VariableName::MultipartInvalidQuoting | VariableName::MultipartLfLine | VariableName::MultipartMissingSemicolon |
+            VariableName::MultipartStrictError | VariableName::MultipartUnmatchedBoundary |
+            VariableName::WebserverErrorLog | VariableName::HighestSeverity | VariableName::StatusLine |
+            VariableName::FullRequest | VariableName::FullRequestLength | VariableName::AuthType |
+            VariableName::MultipartStrictCheck => false,
+        }
+    }
+}
+
 /// Perfect hash map for O(1) variable name lookup.
 static VARIABLE_MAP: phf::Map<&'static str, VariableName> = phf_map! {
     "ARGS" => VariableName::Args,

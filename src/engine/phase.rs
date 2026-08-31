@@ -17,6 +17,19 @@ pub enum Phase {
 }
 
 impl Phase {
+    /// Every phase, in evaluation order.
+    ///
+    /// A `SecMarker` sits between rules in *all* phases, not just the one the
+    /// rules around it happen to declare, so recording its position requires
+    /// walking each phase in turn.
+    pub const ALL: [Phase; 5] = [
+        Phase::RequestHeaders,
+        Phase::RequestBody,
+        Phase::ResponseHeaders,
+        Phase::ResponseBody,
+        Phase::Logging,
+    ];
+
     /// Get the phase number.
     pub fn number(&self) -> u8 {
         *self as u8

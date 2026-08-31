@@ -423,14 +423,16 @@ impl Transaction {
 
             // Handle skipAfter
             if let Some(ref marker) = skip_after {
-                if let Some((marker_phase, marker_idx)) = self.ruleset.marker(marker) {
-                    if marker_phase == phase && marker_idx > idx {
+                if let Some(marker_idx) = self.ruleset.marker(marker, phase) {
+                    if marker_idx > idx {
                         idx = marker_idx;
                         skip_after = None;
                         continue;
                     }
                 }
-                // Marker not found or in different phase, continue
+                // The marker is unknown, or sits at or behind the current
+                // position: ModSecurity does not jump backwards, so the rest of
+                // the phase is skipped.
                 idx += 1;
                 continue;
             }
@@ -702,9 +704,17 @@ impl Transaction {
                     matched_variable: None,
                 });
             }
-            // Variables were specified but resolved to nothing (e.g. absent header).
+            // Variables were specified but resolved to nothing (e.g. absent
+            // header). ModSecurity does not run the operator when there is no
+            // value to run it against, so the rule does not match -- including
+            // when the operator is negated. Reporting a negated operator as a
+            // match here inverts "this variable is absent" into "every request
+            // matches", which is how an unimplemented variable turned CRS
+            // 920100 (`REQUEST_LINE "!@rx ..."`) into a rule that denied all
+            // traffic. Absence is tested with `&VAR "@eq 0"`, which resolves to
+            // a count and so never reaches this branch.
             return Ok(RuleOutcome {
-                matched: rule.operator_negated,
+                matched: false,
                 captures: Vec::new(),
                 matched_variable: None,
             });

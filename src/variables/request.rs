@@ -237,6 +237,14 @@ impl RequestData {
                 let key = form_decode(key);
                 let value = form_decode(value);
                 self.args_post.add(key, value);
+            } else if !pair.is_empty() {
+                // A parameter with no `=` is a name with an empty value, which
+                // is how application frameworks parse it. Dropping it here was
+                // a bypass: percent-encoding the `=` leaves a body with no
+                // literal separator, so the whole body became invisible to
+                // ARGS and ARGS_NAMES while the origin still saw a parameter.
+                // The query-string parser has always handled this shape.
+                self.args_post.add(form_decode(pair), String::new());
             }
         }
     }

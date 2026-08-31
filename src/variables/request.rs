@@ -1,6 +1,7 @@
 //! Request data for variable resolution.
 
 use super::collection::{Collection, HashMapCollection};
+use std::borrow::Cow;
 use super::json::JsonNode;
 
 /// Request data container.
@@ -135,17 +136,11 @@ impl RequestData {
                 let key = &pair[..pos];
                 let value = &pair[pos + 1..];
                 // URL decode
-                let key = percent_encoding::percent_decode_str(key)
-                    .decode_utf8_lossy()
-                    .to_string();
-                let value = percent_encoding::percent_decode_str(value)
-                    .decode_utf8_lossy()
-                    .to_string();
+                let key = form_decode(key);
+                let value = form_decode(value);
                 self.args_get.add(key, value);
             } else if !pair.is_empty() {
-                let key = percent_encoding::percent_decode_str(pair)
-                    .decode_utf8_lossy()
-                    .to_string();
+                let key = form_decode(pair);
                 self.args_get.add(key, String::new());
             }
         }
@@ -239,12 +234,8 @@ impl RequestData {
             if let Some(pos) = pair.find('=') {
                 let key = &pair[..pos];
                 let value = &pair[pos + 1..];
-                let key = percent_encoding::percent_decode_str(key)
-                    .decode_utf8_lossy()
-                    .to_string();
-                let value = percent_encoding::percent_decode_str(value)
-                    .decode_utf8_lossy()
-                    .to_string();
+                let key = form_decode(key);
+                let value = form_decode(value);
                 self.args_post.add(key, value);
             }
         }
@@ -512,6 +503,28 @@ fn resolve_entity(name: &str) -> Option<String> {
 /// rejecting a document over a malformed name when the payload is elsewhere.
 fn decode_name(raw: &[u8]) -> String {
     String::from_utf8_lossy(raw).to_string()
+}
+
+/// Decode one component of `application/x-www-form-urlencoded` input.
+///
+/// In that encoding `+` denotes a space -- it is what a browser emits for a
+/// space in a submitted form -- so decoding only percent-escapes leaves the
+/// argument holding a literal `+` where the origin application will see a
+/// space. Any rule matching a payload that contains whitespace then misses,
+/// which is a bypass rather than a coverage gap: the same request reaches the
+/// application as spaces either way.
+///
+/// The `+` substitution happens *before* percent-decoding, so a plus that was
+/// genuinely sent as `%2B` survives as a plus instead of becoming a space.
+fn form_decode(component: &str) -> String {
+    let plus_decoded: Cow<'_, str> = if component.as_bytes().contains(&b'+') {
+        Cow::Owned(component.replace('+', " "))
+    } else {
+        Cow::Borrowed(component)
+    };
+    percent_encoding::percent_decode_str(&plus_decoded)
+        .decode_utf8_lossy()
+        .into_owned()
 }
 
 /// Record one extracted XML value. Returns `true` once the cap is hit.

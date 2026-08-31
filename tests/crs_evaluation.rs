@@ -33,7 +33,8 @@ fn matched(rules: &str) -> Vec<String> {
 fn blocks(rules: &str) -> bool {
     let m = ModSecurity::from_string(&format!("SecRuleEngine On\n{rules}")).expect("rules load");
     let mut tx = m.new_transaction();
-    tx.process_uri("/docs/report.pdf", "POST", "HTTP/1.1").unwrap();
+    tx.process_uri("/docs/report.pdf", "POST", "HTTP/1.1")
+        .unwrap();
     tx.add_request_header("Host", "example.com").unwrap();
     tx.add_request_header("Content-Type", "application/x-www-form-urlencoded")
         .unwrap();
@@ -133,13 +134,11 @@ fn tx_keys_are_case_insensitive() {
     // `TX:BLOCKING_PARANOIA_LEVEL`. Treating those as different keys stops the
     // anomaly score accumulating, so nothing ever reaches the threshold.
     let set = "SecAction \"id:1,phase:2,pass,nolog,setvar:'tx.paranoia=1'\"\n";
-    for read in [
-        "TX:paranoia",
-        "TX:PARANOIA",
-        "TX:Paranoia",
-    ] {
+    for read in ["TX:paranoia", "TX:PARANOIA", "TX:Paranoia"] {
         assert!(
-            blocks(&format!("{set}SecRule {read} \"@ge 1\" \"id:2,phase:2,deny\"")),
+            blocks(&format!(
+                "{set}SecRule {read} \"@ge 1\" \"id:2,phase:2,deny\""
+            )),
             "reading {read} should find a value written as tx.paranoia"
         );
     }

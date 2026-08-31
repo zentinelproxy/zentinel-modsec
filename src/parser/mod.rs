@@ -18,20 +18,23 @@
 //! - OPERATOR: Pattern to match (e.g., @rx, @contains)
 //! - ACTIONS: Comma-separated list of actions (e.g., id:1,deny,log)
 
-mod lexer;
-mod directive;
-mod variable;
-mod operator;
 mod action;
+mod directive;
+mod lexer;
+mod operator;
+mod variable;
 
-pub use lexer::{Lexer, Token, TokenKind};
+pub use action::{
+    parse_actions, Action, ControlAction, DataAction, DisruptiveAction, FlowAction, LoggingAction,
+    MetadataAction, SetVarSpec, SetVarValue,
+};
 pub use directive::{
     Directive, RuleEngineMode, RuleIdSelector, SecAction, SecMarker, SecRule, UpdateTargetById,
 };
-pub use variable::{VariableSpec, VariableName, Selection, XmlTarget};
+pub use lexer::{Lexer, Token, TokenKind};
+pub use operator::{OperatorName, OperatorSpec};
 pub(crate) use variable::parse_single_variable;
-pub use operator::{OperatorSpec, OperatorName};
-pub use action::{Action, DisruptiveAction, FlowAction, MetadataAction, DataAction, LoggingAction, ControlAction, SetVarSpec, SetVarValue, parse_actions};
+pub use variable::{Selection, VariableName, VariableSpec, XmlTarget};
 
 use crate::error::{Error, Result, SourceLocation};
 use std::collections::HashMap;
@@ -398,18 +401,18 @@ impl Parser {
         // Resolve relative paths (including globs) against the including file's
         // directory. A glob pattern never `exists()` as a literal path, so it is
         // detected explicitly rather than falling back to a CWD-relative path.
-        let resolved_path = if let Some(parent) = self.location.file.as_ref().and_then(|f| f.parent())
-        {
-            let candidate = parent.join(&path);
-            let is_glob = path.contains(['*', '?', '[']);
-            if candidate.exists() || is_glob {
-                candidate.to_string_lossy().to_string()
+        let resolved_path =
+            if let Some(parent) = self.location.file.as_ref().and_then(|f| f.parent()) {
+                let candidate = parent.join(&path);
+                let is_glob = path.contains(['*', '?', '[']);
+                if candidate.exists() || is_glob {
+                    candidate.to_string_lossy().to_string()
+                } else {
+                    path
+                }
             } else {
                 path
-            }
-        } else {
-            path
-        };
+            };
 
         // Parse the included file(s)
         self.parse_glob(&resolved_path)?;
@@ -633,7 +636,10 @@ mod tests {
             Directive::SecRule(rule) => {
                 let arg = &rule.operator.argument;
                 let p = std::path::Path::new(arg);
-                assert!(p.is_absolute(), "data path should be resolved to absolute: {arg}");
+                assert!(
+                    p.is_absolute(),
+                    "data path should be resolved to absolute: {arg}"
+                );
                 assert!(p.exists(), "resolved data path should exist: {arg}");
             }
             _ => panic!("expected SecRule"),
@@ -646,6 +652,10 @@ mod tests {
         let rs = crate::engine::CompiledRuleset::from_string(
             r#"SecRule REQUEST_URI "@contains /etc" "id:301,phase:1,t:normalisePath,deny""#,
         );
-        assert!(rs.is_ok(), "normalisePath must be recognized: {:?}", rs.err());
+        assert!(
+            rs.is_ok(),
+            "normalisePath must be recognized: {:?}",
+            rs.err()
+        );
     }
 }

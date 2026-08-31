@@ -1,22 +1,22 @@
 //! Operator implementations for ModSecurity.
 
-mod traits;
-mod pattern;
 mod comparison;
 mod detection;
-mod validation;
 mod network;
+mod pattern;
+mod traits;
+mod validation;
 
-pub use traits::{Operator, OperatorResult};
-pub use pattern::{RxOperator, PmOperator};
-pub use comparison::{ContainsOperator, BeginsWithOperator, EndsWithOperator, StreqOperator};
-pub use comparison::{EqOperator, GtOperator, LtOperator, GeOperator, LeOperator};
+pub use comparison::{BeginsWithOperator, ContainsOperator, EndsWithOperator, StreqOperator};
+pub use comparison::{EqOperator, GeOperator, GtOperator, LeOperator, LtOperator};
 pub use detection::{DetectSqliOperator, DetectXssOperator};
-pub use validation::{ValidateUrlEncodingOperator, ValidateUtf8EncodingOperator};
 pub use network::IpMatchOperator;
+pub use pattern::{PmOperator, RxOperator};
+pub use traits::{Operator, OperatorResult};
+pub use validation::{ValidateUrlEncodingOperator, ValidateUtf8EncodingOperator};
 
-use crate::parser::{OperatorName, OperatorSpec};
 use crate::error::{Error, Result};
+use crate::parser::{OperatorName, OperatorSpec};
 use std::sync::Arc;
 
 /// Type alias for a compiled operator.
@@ -54,7 +54,9 @@ pub fn compile_operator(spec: &OperatorSpec) -> Result<Arc<dyn Operator>> {
         OperatorName::DetectXss => Ok(Arc::new(DetectXssOperator)),
         OperatorName::ValidateUrlEncoding => Ok(Arc::new(ValidateUrlEncodingOperator)),
         OperatorName::ValidateUtf8Encoding => Ok(Arc::new(ValidateUtf8EncodingOperator)),
-        OperatorName::IpMatch | OperatorName::IpMatchF => Ok(Arc::new(IpMatchOperator::new(argument)?)),
+        OperatorName::IpMatch | OperatorName::IpMatchF => {
+            Ok(Arc::new(IpMatchOperator::new(argument)?))
+        }
         OperatorName::IpMatchFromFile => Ok(Arc::new(IpMatchOperator::from_file(argument)?)),
         OperatorName::NoMatch => Ok(Arc::new(NoMatchOperator)),
         OperatorName::UnconditionalMatch => Ok(Arc::new(UnconditionalMatchOperator)),
@@ -76,7 +78,9 @@ pub fn compile_operator(spec: &OperatorSpec) -> Result<Arc<dyn Operator>> {
         OperatorName::Within => Ok(Arc::new(WithinOperator::new(argument))),
         OperatorName::StrMatch => Ok(Arc::new(ContainsOperator::new(argument))),
         OperatorName::Ne => Ok(Arc::new(NeOperator::new(argument))),
-        _ => Err(Error::UnknownOperator { name: format!("{:?}", name) }),
+        _ => Err(Error::UnknownOperator {
+            name: format!("{:?}", name),
+        }),
     }
 }
 
@@ -138,7 +142,10 @@ impl Operator for ValidateByteRangeOperator {
     fn execute(&self, value: &str) -> OperatorResult {
         // Check if all bytes are within the allowed ranges
         for byte in value.bytes() {
-            let valid = self.ranges.iter().any(|(start, end)| byte >= *start && byte <= *end);
+            let valid = self
+                .ranges
+                .iter()
+                .any(|(start, end)| byte >= *start && byte <= *end);
             if !valid {
                 // Invalid byte found - this is a match (rule should trigger)
                 return OperatorResult::matched(format!("invalid byte: {}", byte));

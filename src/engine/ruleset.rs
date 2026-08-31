@@ -86,7 +86,10 @@ impl Rules {
 
     /// Get rules for a phase.
     pub fn for_phase(&self, phase: Phase) -> &[CompiledRule] {
-        self.by_phase.get(&phase).map(|v| v.as_slice()).unwrap_or(&[])
+        self.by_phase
+            .get(&phase)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
     }
 
     /// Get a marker's position within one phase.
@@ -246,7 +249,9 @@ impl CompiledRuleset {
                     // Handle chaining
                     if let Some((chain_phase, chain_idx)) = pending_chain.take() {
                         if chain_phase == phase {
-                            if let Some(prev_rule) = ruleset.rules.by_phase
+                            if let Some(prev_rule) = ruleset
+                                .rules
+                                .by_phase
                                 .get_mut(&chain_phase)
                                 .and_then(|r| r.get_mut(chain_idx))
                             {
@@ -426,7 +431,6 @@ fn variable_matches_target(var: &VariableSpec, target: &str) -> bool {
     }
 }
 
-
 /// Compile a rule's operator, reporting an unusable `@rx` pattern rather than
 /// failing the whole load.
 ///
@@ -575,7 +579,9 @@ fn extract_id(actions: &[Action]) -> Option<String> {
 
 /// Check if chain action is present.
 fn has_chain(actions: &[Action]) -> bool {
-    actions.iter().any(|a| matches!(a, Action::Flow(FlowAction::Chain)))
+    actions
+        .iter()
+        .any(|a| matches!(a, Action::Flow(FlowAction::Chain)))
 }
 
 /// Extract and compile transformation pipeline.

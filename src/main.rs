@@ -1,9 +1,9 @@
 //! zentinel-modsec CLI tool.
 
 use clap::{Parser, Subcommand};
-use zentinel_modsec::{ModSecurity, Result, Transaction};
 use std::path::PathBuf;
 use tracing::{error, info};
+use zentinel_modsec::{ModSecurity, Result, Transaction};
 
 #[derive(Parser)]
 #[command(name = "zentinel-modsec")]
@@ -67,9 +67,7 @@ fn main() -> Result<()> {
         2 => "debug",
         _ => "trace",
     };
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .init();
+    tracing_subscriber::fmt().with_env_filter(filter).init();
 
     match cli.command {
         Commands::Check { rules } => check_rules(&rules),

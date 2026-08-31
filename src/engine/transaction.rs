@@ -23,9 +23,7 @@ use crate::variables::{Collection, RequestData, ResponseData, TxCollection, Vari
 /// inspected rather than silently falling through to the urlencoded parser.
 fn is_json_content_type(ct_lower: &str) -> bool {
     let media_type = ct_lower.split(';').next().unwrap_or("").trim();
-    media_type == "application/json"
-        || media_type == "text/json"
-        || media_type.ends_with("+json")
+    media_type == "application/json" || media_type == "text/json" || media_type.ends_with("+json")
 }
 
 /// Whether a lowercased Content-Type denotes an XML body.
@@ -35,9 +33,7 @@ fn is_json_content_type(ct_lower: &str) -> bool {
 /// falling through to a parser that finds nothing in them.
 fn is_xml_content_type(ct_lower: &str) -> bool {
     let media_type = ct_lower.split(';').next().unwrap_or("").trim();
-    media_type == "application/xml"
-        || media_type == "text/xml"
-        || media_type.ends_with("+xml")
+    media_type == "application/xml" || media_type == "text/xml" || media_type.ends_with("+xml")
 }
 
 /// A ModSecurity transaction for processing a single request.
@@ -563,7 +559,8 @@ impl Transaction {
                     match outcome {
                         DisruptiveOutcome::Deny(status) => {
                             if should_block {
-                                let mut intervention = Intervention::deny(status, phase, rule.id.clone());
+                                let mut intervention =
+                                    Intervention::deny(status, phase, rule.id.clone());
                                 intervention.add_metadata(action_result.metadata);
                                 self.intervention = Some(intervention);
                                 return Ok(());
@@ -571,7 +568,8 @@ impl Transaction {
                         }
                         DisruptiveOutcome::Block => {
                             if should_block {
-                                let mut intervention = Intervention::deny(self.default_status, phase, rule.id.clone());
+                                let mut intervention =
+                                    Intervention::deny(self.default_status, phase, rule.id.clone());
                                 intervention.add_metadata(action_result.metadata);
                                 self.intervention = Some(intervention);
                                 return Ok(());
@@ -583,7 +581,8 @@ impl Transaction {
                         }
                         DisruptiveOutcome::Redirect(url) => {
                             if should_block {
-                                let mut intervention = Intervention::redirect(url, phase, rule.id.clone());
+                                let mut intervention =
+                                    Intervention::redirect(url, phase, rule.id.clone());
                                 intervention.add_metadata(action_result.metadata);
                                 self.intervention = Some(intervention);
                                 return Ok(());
@@ -695,7 +694,11 @@ impl Transaction {
             // operator unconditionally — this is how CRS sets up TX thresholds.
             if rule.variables.is_empty() {
                 let result = rule.operator.execute("");
-                let matched = if rule.operator_negated { !result.matched } else { result.matched };
+                let matched = if rule.operator_negated {
+                    !result.matched
+                } else {
+                    result.matched
+                };
                 // A SecAction has no variable, so there is nothing to report
                 // as the match target.
                 return Ok(RuleOutcome {
@@ -742,7 +745,11 @@ impl Transaction {
             let transformed = rule.transformations.apply(&value);
             let result = operator.execute(&transformed);
 
-            let final_match = if rule.operator_negated { !result.matched } else { result.matched };
+            let final_match = if rule.operator_negated {
+                !result.matched
+            } else {
+                result.matched
+            };
 
             if final_match {
                 let matched = MatchedVariable {
@@ -849,11 +856,14 @@ mod tests {
 
     #[test]
     fn test_basic_match() {
-        let ruleset = make_ruleset(r#"
+        let ruleset = make_ruleset(
+            r#"
             SecRule REQUEST_URI "@contains /admin" "id:1,phase:1,deny"
-        "#);
+        "#,
+        );
         let mut tx = Transaction::new(ruleset, 403);
-        tx.process_uri("/admin/dashboard", "GET", "HTTP/1.1").unwrap();
+        tx.process_uri("/admin/dashboard", "GET", "HTTP/1.1")
+            .unwrap();
         tx.process_request_headers().unwrap();
 
         assert!(tx.has_intervention());
@@ -863,11 +873,14 @@ mod tests {
 
     #[test]
     fn test_no_match() {
-        let ruleset = make_ruleset(r#"
+        let ruleset = make_ruleset(
+            r#"
             SecRule REQUEST_URI "@contains /admin" "id:1,phase:1,deny"
-        "#);
+        "#,
+        );
         let mut tx = Transaction::new(ruleset, 403);
-        tx.process_uri("/public/index.html", "GET", "HTTP/1.1").unwrap();
+        tx.process_uri("/public/index.html", "GET", "HTTP/1.1")
+            .unwrap();
         tx.process_request_headers().unwrap();
 
         assert!(!tx.has_intervention());
@@ -875,53 +888,70 @@ mod tests {
 
     #[test]
     fn test_setvar() {
-        let ruleset = make_ruleset(r#"
+        let ruleset = make_ruleset(
+            r#"
             SecRule REQUEST_URI "@contains /test" "id:1,phase:1,pass,setvar:TX.score=5"
-        "#);
+        "#,
+        );
         let mut tx = Transaction::new(ruleset, 403);
         tx.process_uri("/test/page", "GET", "HTTP/1.1").unwrap();
         tx.process_request_headers().unwrap();
 
         assert!(!tx.has_intervention());
-        let score = tx.tx().get("score").and_then(|v| v.first().map(|s| s.to_string()));
+        let score = tx
+            .tx()
+            .get("score")
+            .and_then(|v| v.first().map(|s| s.to_string()));
         assert_eq!(score, Some("5".to_string()));
     }
 
     #[test]
     fn test_operator_arg_macro_ge_threshold() {
         // @ge with a %{tx.*} argument must compare against the resolved value.
-        let ruleset = make_ruleset(r#"
+        let ruleset = make_ruleset(
+            r#"
             SecRule REQUEST_URI "@contains /" "id:1,phase:1,pass,nolog,setvar:tx.threshold=5"
             SecRule REQUEST_URI "@contains /" "id:2,phase:1,pass,nolog,setvar:tx.score=10"
             SecRule TX:score "@ge %{tx.threshold}" "id:3,phase:1,deny"
-        "#);
+        "#,
+        );
         let mut tx = Transaction::new(ruleset, 403);
         tx.process_uri("/", "GET", "HTTP/1.1").unwrap();
         tx.process_request_headers().unwrap();
-        assert!(tx.has_intervention(), "score 10 >= threshold 5 should block");
+        assert!(
+            tx.has_intervention(),
+            "score 10 >= threshold 5 should block"
+        );
     }
 
     #[test]
     fn test_operator_arg_macro_ge_below_threshold() {
-        let ruleset = make_ruleset(r#"
+        let ruleset = make_ruleset(
+            r#"
             SecRule REQUEST_URI "@contains /" "id:1,phase:1,pass,nolog,setvar:tx.threshold=5"
             SecRule REQUEST_URI "@contains /" "id:2,phase:1,pass,nolog,setvar:tx.score=3"
             SecRule TX:score "@ge %{tx.threshold}" "id:3,phase:1,deny"
-        "#);
+        "#,
+        );
         let mut tx = Transaction::new(ruleset, 403);
         tx.process_uri("/", "GET", "HTTP/1.1").unwrap();
         tx.process_request_headers().unwrap();
-        assert!(!tx.has_intervention(), "score 3 < threshold 5 should not block");
+        assert!(
+            !tx.has_intervention(),
+            "score 3 < threshold 5 should not block"
+        );
     }
 
     #[test]
     fn test_negated_within_macro_does_not_block_allowed() {
         // Regression for the 911100 case: a negated @within whose argument is a
         // resolvable macro must not block when the value IS in the list.
-        let ruleset = make_ruleset(r#"
+        let ruleset = make_ruleset(
+            r#"
             SecRule REQUEST_URI "@contains /" "id:1,phase:1,pass,nolog,setvar:tx.allowed=GET"
             SecRule REQUEST_METHOD "!@within %{tx.allowed}" "id:2,phase:1,deny"
-        "#);
+        "#,
+        );
         let mut tx = Transaction::new(ruleset, 403);
         tx.process_uri("/", "GET", "HTTP/1.1").unwrap();
         tx.process_request_headers().unwrap();
@@ -930,10 +960,12 @@ mod tests {
 
     #[test]
     fn test_negated_within_macro_blocks_disallowed() {
-        let ruleset = make_ruleset(r#"
+        let ruleset = make_ruleset(
+            r#"
             SecRule REQUEST_URI "@contains /" "id:1,phase:1,pass,nolog,setvar:tx.allowed=GET"
             SecRule REQUEST_METHOD "!@within %{tx.allowed}" "id:2,phase:1,deny"
-        "#);
+        "#,
+        );
         let mut tx = Transaction::new(ruleset, 403);
         tx.process_uri("/", "POST", "HTTP/1.1").unwrap();
         tx.process_request_headers().unwrap();
@@ -944,25 +976,36 @@ mod tests {
     fn test_secaction_sets_tx_and_macro_resolves() {
         // CRS-style: SecAction (no variables) seeds a TX threshold that a later
         // rule's operator macro resolves against.
-        let ruleset = make_ruleset(r#"
+        let ruleset = make_ruleset(
+            r#"
             SecAction "id:1,phase:1,pass,nolog,setvar:tx.threshold=5"
             SecRule REQUEST_URI "@contains /" "id:2,phase:1,pass,nolog,setvar:tx.score=10"
             SecRule TX:score "@ge %{tx.threshold}" "id:3,phase:1,deny"
-        "#);
+        "#,
+        );
         let mut tx = Transaction::new(ruleset, 403);
         tx.process_uri("/", "GET", "HTTP/1.1").unwrap();
         tx.process_request_headers().unwrap();
-        let threshold = tx.tx().get("threshold").and_then(|v| v.first().map(|s| s.to_string()));
-        assert_eq!(threshold, Some("5".to_string()), "SecAction setvar must apply");
+        let threshold = tx
+            .tx()
+            .get("threshold")
+            .and_then(|v| v.first().map(|s| s.to_string()));
+        assert_eq!(
+            threshold,
+            Some("5".to_string()),
+            "SecAction setvar must apply"
+        );
         assert!(tx.has_intervention(), "10 >= 5 should block");
     }
 
     #[test]
     fn test_request_header_named_selector_matches() {
         // REQUEST_HEADERS:User-Agent must match regardless of header-name case.
-        let ruleset = make_ruleset(r#"
+        let ruleset = make_ruleset(
+            r#"
             SecRule REQUEST_HEADERS:User-Agent "@contains sqlmap" "id:1,phase:1,deny"
-        "#);
+        "#,
+        );
         let mut tx = Transaction::new(ruleset, 403);
         tx.process_uri("/", "GET", "HTTP/1.1").unwrap();
         tx.add_request_header("User-Agent", "sqlmap/1.0").unwrap();
@@ -974,44 +1017,71 @@ mod tests {
     fn test_setvar_value_macro_accumulates() {
         // CRS-style score accumulation: setvar:'tx.anomaly_score=+%{tx.critical_anomaly_score}'
         // must add the resolved delta (5), and twice must yield 10.
-        let ruleset = make_ruleset(r#"
+        let ruleset = make_ruleset(
+            r#"
             SecAction "id:1,phase:1,pass,nolog,setvar:tx.critical_anomaly_score=5"
             SecRule REQUEST_URI "@contains /" "id:2,phase:1,pass,nolog,setvar:'tx.anomaly_score=+%{tx.critical_anomaly_score}'"
             SecRule REQUEST_URI "@contains /" "id:3,phase:1,pass,nolog,setvar:'tx.anomaly_score=+%{tx.critical_anomaly_score}'"
-        "#);
+        "#,
+        );
         let mut tx = Transaction::new(ruleset, 403);
         tx.process_uri("/", "GET", "HTTP/1.1").unwrap();
         tx.process_request_headers().unwrap();
-        let score = tx.tx().get("anomaly_score").and_then(|v| v.first().map(|s| s.to_string()));
-        assert_eq!(score, Some("10".to_string()), "two +5 macro increments should total 10");
+        let score = tx
+            .tx()
+            .get("anomaly_score")
+            .and_then(|v| v.first().map(|s| s.to_string()));
+        assert_eq!(
+            score,
+            Some("10".to_string()),
+            "two +5 macro increments should total 10"
+        );
     }
 
     #[test]
     fn test_setvar_value_macro_unresolved_is_noop() {
         // An unresolved macro delta must not silently increment by 1.
-        let ruleset = make_ruleset(r#"
+        let ruleset = make_ruleset(
+            r#"
             SecRule REQUEST_URI "@contains /" "id:1,phase:1,pass,nolog,setvar:'tx.anomaly_score=+%{tx.missing}'"
-        "#);
+        "#,
+        );
         let mut tx = Transaction::new(ruleset, 403);
         tx.process_uri("/", "GET", "HTTP/1.1").unwrap();
         tx.process_request_headers().unwrap();
-        let score = tx.tx().get("anomaly_score").and_then(|v| v.first().map(|s| s.to_string()));
-        assert_eq!(score, Some("0".to_string()), "unresolved macro increment should be a no-op");
+        let score = tx
+            .tx()
+            .get("anomaly_score")
+            .and_then(|v| v.first().map(|s| s.to_string()));
+        assert_eq!(
+            score,
+            Some("0".to_string()),
+            "unresolved macro increment should be a no-op"
+        );
     }
 
     #[test]
     fn test_detection_only_mode() {
-        let ruleset = make_ruleset(r#"
+        let ruleset = make_ruleset(
+            r#"
             SecRuleEngine DetectionOnly
             SecRule REQUEST_URI "@contains /admin" "id:1,phase:1,deny"
-        "#);
-        let mut tx = Transaction::new(Arc::new(
-            CompiledRuleset::from_string(r#"
+        "#,
+        );
+        let mut tx = Transaction::new(
+            Arc::new(
+                CompiledRuleset::from_string(
+                    r#"
                 SecRuleEngine DetectionOnly
                 SecRule REQUEST_URI "@contains /admin" "id:1,phase:1,deny"
-            "#).unwrap()
-        ), 403);
-        tx.process_uri("/admin/dashboard", "GET", "HTTP/1.1").unwrap();
+            "#,
+                )
+                .unwrap(),
+            ),
+            403,
+        );
+        tx.process_uri("/admin/dashboard", "GET", "HTTP/1.1")
+            .unwrap();
         tx.process_request_headers().unwrap();
 
         // Should match but not block

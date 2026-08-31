@@ -1,8 +1,8 @@
 //! Request data for variable resolution.
 
 use super::collection::{Collection, HashMapCollection};
-use std::borrow::Cow;
 use super::json::JsonNode;
+use std::borrow::Cow;
 
 /// Request data container.
 #[derive(Debug, Clone, Default)]

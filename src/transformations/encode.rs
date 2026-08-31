@@ -111,6 +111,9 @@ mod tests {
     fn test_sha1() {
         let t = Sha1;
         // SHA1 of "hello"
-        assert_eq!(t.transform("hello"), "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d");
+        assert_eq!(
+            t.transform("hello"),
+            "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d"
+        );
     }
 }

@@ -191,7 +191,10 @@ fn run_stage(m: &ModSecurity, input: &Input) -> Vec<String> {
     // go-ftw fills these in unless a test opts out.
     if input.autocomplete_headers.unwrap_or(true) {
         if !has("Host") {
-            let host = input.dest_addr.clone().unwrap_or_else(|| "localhost".into());
+            let host = input
+                .dest_addr
+                .clone()
+                .unwrap_or_else(|| "localhost".into());
             let _ = tx.add_request_header("Host", &host);
         }
         if !has("User-Agent") {
@@ -230,12 +233,26 @@ fn crs_regression_corpus() {
     assert!(root.is_dir(), "corpus not found at {}", root.display());
 
     for entry in walkdir::WalkDir::new(&root).into_iter().flatten() {
-        if entry.path().extension().map(|e| e != "yaml").unwrap_or(true) {
+        if entry
+            .path()
+            .extension()
+            .map(|e| e != "yaml")
+            .unwrap_or(true)
+        {
             continue;
         }
-        let Ok(text) = std::fs::read_to_string(entry.path()) else { continue };
-        let Ok(parsed) = serde_yaml::from_str::<TestFile>(&text) else { continue };
-        let fname = entry.path().file_name().unwrap().to_string_lossy().to_string();
+        let Ok(text) = std::fs::read_to_string(entry.path()) else {
+            continue;
+        };
+        let Ok(parsed) = serde_yaml::from_str::<TestFile>(&text) else {
+            continue;
+        };
+        let fname = entry
+            .path()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
 
         for t in &parsed.tests {
             for stage in &t.stages {
@@ -275,8 +292,10 @@ fn crs_regression_corpus() {
     }
 
     let total = pass + fail;
-    println!("\nCRS regression corpus: {pass}/{total} passing ({:.1}%), {skipped} skipped",
-             100.0 * f64::from(pass) / f64::from(total));
+    println!(
+        "\nCRS regression corpus: {pass}/{total} passing ({:.1}%), {skipped} skipped",
+        100.0 * f64::from(pass) / f64::from(total)
+    );
 
     let mut worst: Vec<_> = by_file.into_iter().collect();
     worst.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
@@ -330,20 +349,83 @@ fn stock_crs_blocks_attacks_and_passes_ordinary_traffic() {
     let ue = "application/x-www-form-urlencoded";
     let xml = "application/xml";
     // name, should_block, method, uri, content-type, body
-    type Case = (&'static str, bool, &'static str, &'static str, &'static str, &'static [u8]);
+    type Case = (
+        &'static str,
+        bool,
+        &'static str,
+        &'static str,
+        &'static str,
+        &'static [u8],
+    );
     let cases: &[Case] = &[
         ("GET /", false, "GET", "/", "", b""),
         ("static page", false, "GET", "/index.html", "", b""),
         ("health check", false, "GET", "/api/v1/health", "", b""),
         ("pdf download", false, "GET", "/docs/report.pdf", "", b""),
-        ("ordinary query", false, "GET", "/search?q=blue+widgets&page=2", "", b""),
-        ("form post", false, "POST", "/api/orders", ue, b"item=widget&qty=3"),
-        ("xml post", false, "POST", "/api/orders", xml, br#"<order><item id="7">widget</item></order>"#),
-        ("SQLi in query", true, "GET", "/u?id=1'+UNION+SELECT+password+FROM+users--+", "", b""),
-        ("SQLi in form", true, "POST", "/u", ue, b"q=1' UNION SELECT password FROM users-- "),
-        ("SQLi in XML", true, "POST", "/u", xml, br#"<o><q>1' UNION SELECT password FROM users-- </q></o>"#),
-        ("XSS in query", true, "GET", "/s?q=%3Cscript%3Ealert(1)%3C/script%3E", "", b""),
-        ("LFI in query", true, "GET", "/f?p=../../../../etc/passwd", "", b""),
+        (
+            "ordinary query",
+            false,
+            "GET",
+            "/search?q=blue+widgets&page=2",
+            "",
+            b"",
+        ),
+        (
+            "form post",
+            false,
+            "POST",
+            "/api/orders",
+            ue,
+            b"item=widget&qty=3",
+        ),
+        (
+            "xml post",
+            false,
+            "POST",
+            "/api/orders",
+            xml,
+            br#"<order><item id="7">widget</item></order>"#,
+        ),
+        (
+            "SQLi in query",
+            true,
+            "GET",
+            "/u?id=1'+UNION+SELECT+password+FROM+users--+",
+            "",
+            b"",
+        ),
+        (
+            "SQLi in form",
+            true,
+            "POST",
+            "/u",
+            ue,
+            b"q=1' UNION SELECT password FROM users-- ",
+        ),
+        (
+            "SQLi in XML",
+            true,
+            "POST",
+            "/u",
+            xml,
+            br#"<o><q>1' UNION SELECT password FROM users-- </q></o>"#,
+        ),
+        (
+            "XSS in query",
+            true,
+            "GET",
+            "/s?q=%3Cscript%3Ealert(1)%3C/script%3E",
+            "",
+            b"",
+        ),
+        (
+            "LFI in query",
+            true,
+            "GET",
+            "/f?p=../../../../etc/passwd",
+            "",
+            b"",
+        ),
     ];
 
     let mut wrong = Vec::new();
@@ -351,15 +433,22 @@ fn stock_crs_blocks_attacks_and_passes_ordinary_traffic() {
         let mut tx = m.new_transaction();
         tx.process_uri(uri, method, "HTTP/1.1").unwrap();
         tx.add_request_header("Host", "example.com").unwrap();
-        tx.add_request_header("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) Firefox/128.0")
+        tx.add_request_header(
+            "User-Agent",
+            "Mozilla/5.0 (X11; Linux x86_64) Firefox/128.0",
+        )
+        .unwrap();
+        tx.add_request_header("Accept", "text/html,application/xhtml+xml")
             .unwrap();
-        tx.add_request_header("Accept", "text/html,application/xhtml+xml").unwrap();
-        tx.add_request_header("Accept-Language", "en-US,en;q=0.9").unwrap();
-        tx.add_request_header("Accept-Encoding", "gzip, deflate").unwrap();
+        tx.add_request_header("Accept-Language", "en-US,en;q=0.9")
+            .unwrap();
+        tx.add_request_header("Accept-Encoding", "gzip, deflate")
+            .unwrap();
         tx.add_request_header("Connection", "keep-alive").unwrap();
         if !ct.is_empty() {
             tx.add_request_header("Content-Type", ct).unwrap();
-            tx.add_request_header("Content-Length", &body.len().to_string()).unwrap();
+            tx.add_request_header("Content-Length", &body.len().to_string())
+                .unwrap();
         }
         tx.process_request_headers().unwrap();
         if !body.is_empty() {
@@ -368,7 +457,10 @@ fn stock_crs_blocks_attacks_and_passes_ordinary_traffic() {
         tx.process_request_body().unwrap();
 
         let blocked = tx.has_intervention();
-        let ids = tx.intervention().map(|i| i.rule_ids.clone()).unwrap_or_default();
+        let ids = tx
+            .intervention()
+            .map(|i| i.rule_ids.clone())
+            .unwrap_or_default();
         println!("{name:<18} blocked={blocked:<6} {ids:?}");
         if blocked != *should_block {
             wrong.push(format!(
@@ -377,5 +469,9 @@ fn stock_crs_blocks_attacks_and_passes_ordinary_traffic() {
             ));
         }
     }
-    assert!(wrong.is_empty(), "stock CRS behaved wrongly:\n  {}", wrong.join("\n  "));
+    assert!(
+        wrong.is_empty(),
+        "stock CRS behaved wrongly:\n  {}",
+        wrong.join("\n  ")
+    );
 }

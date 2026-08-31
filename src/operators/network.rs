@@ -25,12 +25,12 @@ impl IpMatchOperator {
                     // Try as IP address first
                     if let Ok(ip) = s.parse::<IpAddr>() {
                         match ip {
-                            IpAddr::V4(v4) => Ok(IpNetwork::V4(
-                                ipnetwork::Ipv4Network::new(v4, 32).unwrap(),
-                            )),
-                            IpAddr::V6(v6) => Ok(IpNetwork::V6(
-                                ipnetwork::Ipv6Network::new(v6, 128).unwrap(),
-                            )),
+                            IpAddr::V4(v4) => {
+                                Ok(IpNetwork::V4(ipnetwork::Ipv4Network::new(v4, 32).unwrap()))
+                            }
+                            IpAddr::V6(v6) => {
+                                Ok(IpNetwork::V6(ipnetwork::Ipv6Network::new(v6, 128).unwrap()))
+                            }
                         }
                     } else {
                         s.parse::<IpNetwork>()
@@ -63,12 +63,12 @@ impl IpMatchOperator {
                 } else {
                     if let Ok(ip) = s.parse::<IpAddr>() {
                         match ip {
-                            IpAddr::V4(v4) => Ok(IpNetwork::V4(
-                                ipnetwork::Ipv4Network::new(v4, 32).unwrap(),
-                            )),
-                            IpAddr::V6(v6) => Ok(IpNetwork::V6(
-                                ipnetwork::Ipv6Network::new(v6, 128).unwrap(),
-                            )),
+                            IpAddr::V4(v4) => {
+                                Ok(IpNetwork::V4(ipnetwork::Ipv4Network::new(v4, 32).unwrap()))
+                            }
+                            IpAddr::V6(v6) => {
+                                Ok(IpNetwork::V6(ipnetwork::Ipv6Network::new(v6, 128).unwrap()))
+                            }
                         }
                     } else {
                         s.parse::<IpNetwork>()

@@ -11,7 +11,7 @@
 use super::DetectionResult;
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder, MatchKind};
 use once_cell::sync::Lazy;
-use regex::{RegexSet, Regex};
+use regex::{Regex, RegexSet};
 
 // ============================================================================
 // Static Pattern Matchers (compiled once at first use)
@@ -70,20 +70,52 @@ static XSS_REGEX_SET: Lazy<RegexSet> = Lazy::new(|| {
         r"(?i)window\s*\.\s*location",
         // document.cookie
         r"(?i)document\s*\.\s*cookie",
-    ]).expect("XSS regex patterns should compile")
+    ])
+    .expect("XSS regex patterns should compile")
 });
 
 /// Aho-Corasick matcher for dangerous HTML tags.
 /// Uses leftmost-first matching for speed.
 static DANGEROUS_TAGS_AC: Lazy<AhoCorasick> = Lazy::new(|| {
     let tags = [
-        "<script", "<iframe", "<object", "<embed", "<applet", "<form",
-        "<input", "<button", "<select", "<textarea", "<link", "<style",
-        "<meta", "<base", "<svg", "<math", "<video", "<audio", "<source",
-        "<track", "<canvas", "<frame", "<frameset", "<layer", "<ilayer",
-        "<bgsound", "<isindex", "<marquee", "<blink", "<plaintext",
-        "<listing", "<xmp", "<noscript", "<template", "<slot", "<portal",
-        "<img", "<body",
+        "<script",
+        "<iframe",
+        "<object",
+        "<embed",
+        "<applet",
+        "<form",
+        "<input",
+        "<button",
+        "<select",
+        "<textarea",
+        "<link",
+        "<style",
+        "<meta",
+        "<base",
+        "<svg",
+        "<math",
+        "<video",
+        "<audio",
+        "<source",
+        "<track",
+        "<canvas",
+        "<frame",
+        "<frameset",
+        "<layer",
+        "<ilayer",
+        "<bgsound",
+        "<isindex",
+        "<marquee",
+        "<blink",
+        "<plaintext",
+        "<listing",
+        "<xmp",
+        "<noscript",
+        "<template",
+        "<slot",
+        "<portal",
+        "<img",
+        "<body",
     ];
     AhoCorasickBuilder::new()
         .ascii_case_insensitive(true)
@@ -95,27 +127,105 @@ static DANGEROUS_TAGS_AC: Lazy<AhoCorasick> = Lazy::new(|| {
 /// Aho-Corasick matcher for event handlers.
 static EVENT_HANDLERS_AC: Lazy<AhoCorasick> = Lazy::new(|| {
     let handlers = [
-        "onabort=", "onafterprint=", "onanimationend=", "onanimationiteration=",
-        "onanimationstart=", "onbeforeprint=", "onbeforeunload=", "onblur=",
-        "oncanplay=", "oncanplaythrough=", "onchange=", "onclick=", "oncontextmenu=",
-        "oncopy=", "oncut=", "ondblclick=", "ondrag=", "ondragend=", "ondragenter=",
-        "ondragleave=", "ondragover=", "ondragstart=", "ondrop=", "ondurationchange=",
-        "onemptied=", "onended=", "onerror=", "onfocus=", "onfocusin=", "onfocusout=",
-        "onhashchange=", "oninput=", "oninvalid=", "onkeydown=", "onkeypress=",
-        "onkeyup=", "onload=", "onloadeddata=", "onloadedmetadata=", "onloadstart=",
-        "onmessage=", "onmousedown=", "onmouseenter=", "onmouseleave=", "onmousemove=",
-        "onmouseout=", "onmouseover=", "onmouseup=", "onmousewheel=", "onoffline=",
-        "ononline=", "onopen=", "onpagehide=", "onpageshow=", "onpaste=", "onpause=",
-        "onplay=", "onplaying=", "onpopstate=", "onprogress=", "onratechange=",
-        "onreset=", "onresize=", "onscroll=", "onsearch=", "onseeked=", "onseeking=",
-        "onselect=", "onshow=", "onstalled=", "onstorage=", "onsubmit=", "onsuspend=",
-        "ontimeupdate=", "ontoggle=", "ontouchcancel=", "ontouchend=", "ontouchmove=",
-        "ontouchstart=", "ontransitionend=", "onunload=", "onvolumechange=",
-        "onwaiting=", "onwheel=", "onpointerdown=", "onpointermove=", "onpointerup=",
-        "onpointercancel=", "onpointerenter=", "onpointerleave=", "onpointerover=",
-        "onpointerout=", "ongotpointercapture=", "onlostpointercapture=",
-        "onbeforeinput=", "onformdata=", "onsecuritypolicyviolation=",
-        "onslotchange=", "onvisibilitychange=",
+        "onabort=",
+        "onafterprint=",
+        "onanimationend=",
+        "onanimationiteration=",
+        "onanimationstart=",
+        "onbeforeprint=",
+        "onbeforeunload=",
+        "onblur=",
+        "oncanplay=",
+        "oncanplaythrough=",
+        "onchange=",
+        "onclick=",
+        "oncontextmenu=",
+        "oncopy=",
+        "oncut=",
+        "ondblclick=",
+        "ondrag=",
+        "ondragend=",
+        "ondragenter=",
+        "ondragleave=",
+        "ondragover=",
+        "ondragstart=",
+        "ondrop=",
+        "ondurationchange=",
+        "onemptied=",
+        "onended=",
+        "onerror=",
+        "onfocus=",
+        "onfocusin=",
+        "onfocusout=",
+        "onhashchange=",
+        "oninput=",
+        "oninvalid=",
+        "onkeydown=",
+        "onkeypress=",
+        "onkeyup=",
+        "onload=",
+        "onloadeddata=",
+        "onloadedmetadata=",
+        "onloadstart=",
+        "onmessage=",
+        "onmousedown=",
+        "onmouseenter=",
+        "onmouseleave=",
+        "onmousemove=",
+        "onmouseout=",
+        "onmouseover=",
+        "onmouseup=",
+        "onmousewheel=",
+        "onoffline=",
+        "ononline=",
+        "onopen=",
+        "onpagehide=",
+        "onpageshow=",
+        "onpaste=",
+        "onpause=",
+        "onplay=",
+        "onplaying=",
+        "onpopstate=",
+        "onprogress=",
+        "onratechange=",
+        "onreset=",
+        "onresize=",
+        "onscroll=",
+        "onsearch=",
+        "onseeked=",
+        "onseeking=",
+        "onselect=",
+        "onshow=",
+        "onstalled=",
+        "onstorage=",
+        "onsubmit=",
+        "onsuspend=",
+        "ontimeupdate=",
+        "ontoggle=",
+        "ontouchcancel=",
+        "ontouchend=",
+        "ontouchmove=",
+        "ontouchstart=",
+        "ontransitionend=",
+        "onunload=",
+        "onvolumechange=",
+        "onwaiting=",
+        "onwheel=",
+        "onpointerdown=",
+        "onpointermove=",
+        "onpointerup=",
+        "onpointercancel=",
+        "onpointerenter=",
+        "onpointerleave=",
+        "onpointerover=",
+        "onpointerout=",
+        "ongotpointercapture=",
+        "onlostpointercapture=",
+        "onbeforeinput=",
+        "onformdata=",
+        "onsecuritypolicyviolation=",
+        "onslotchange=",
+        "onvisibilitychange=",
     ];
     AhoCorasickBuilder::new()
         .ascii_case_insensitive(true)
@@ -137,8 +247,19 @@ static DANGEROUS_SCHEMES_AC: Lazy<AhoCorasick> = Lazy::new(|| {
 /// Quick-check patterns using Aho-Corasick for fast rejection.
 static QUICK_CHECK_AC: Lazy<AhoCorasick> = Lazy::new(|| {
     let patterns = [
-        "<", "javascript", "vbscript", "on", "eval", "innerhtml", "outerhtml",
-        "document.", "window.", "%3c", "&lt", "\\x3c", "\\u003c",
+        "<",
+        "javascript",
+        "vbscript",
+        "on",
+        "eval",
+        "innerhtml",
+        "outerhtml",
+        "document.",
+        "window.",
+        "%3c",
+        "&lt",
+        "\\x3c",
+        "\\u003c",
     ];
     AhoCorasickBuilder::new()
         .ascii_case_insensitive(true)
@@ -148,14 +269,12 @@ static QUICK_CHECK_AC: Lazy<AhoCorasick> = Lazy::new(|| {
 });
 
 /// Regex for normalizing whitespace in tags (compiled once).
-static NORMALIZE_TAG_WS: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"<\s+").expect("Tag whitespace regex should compile")
-});
+static NORMALIZE_TAG_WS: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"<\s+").expect("Tag whitespace regex should compile"));
 
 /// Regex for normalizing attribute spacing (compiled once).
-static NORMALIZE_ATTR_WS: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"\s*=\s*").expect("Attribute whitespace regex should compile")
-});
+static NORMALIZE_ATTR_WS: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"\s*=\s*").expect("Attribute whitespace regex should compile"));
 
 // ============================================================================
 // Public API
@@ -213,7 +332,9 @@ fn check_patterns(input: &str) -> Option<DetectionResult> {
     }
 
     if DANGEROUS_SCHEMES_AC.is_match(input) {
-        return Some(DetectionResult::detected("Dangerous URL scheme".to_string()));
+        return Some(DetectionResult::detected(
+            "Dangerous URL scheme".to_string(),
+        ));
     }
 
     None
@@ -309,7 +430,9 @@ mod tests {
     #[test]
     fn test_safe_input() {
         assert!(!is_xss("hello world"));
-        assert!(!is_xss("This is normal text without any special characters"));
+        assert!(!is_xss(
+            "This is normal text without any special characters"
+        ));
         assert!(!is_xss("12345"));
         assert!(!is_xss("user@example.com"));
     }

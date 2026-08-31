@@ -9,7 +9,7 @@
 
 #![cfg(feature = "libmodsec-compare")]
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int, c_void};
 use std::time::Duration;
@@ -50,13 +50,34 @@ extern "C" {
 
     fn msc_create_rules_set() -> *mut Rules;
     fn msc_rules_cleanup(rules: *mut Rules);
-    fn msc_rules_add(rules: *mut Rules, plain_rules: *const c_char, error: *mut *const c_char) -> c_int;
-    fn msc_rules_add_file(rules: *mut Rules, file: *const c_char, error: *mut *const c_char) -> c_int;
+    fn msc_rules_add(
+        rules: *mut Rules,
+        plain_rules: *const c_char,
+        error: *mut *const c_char,
+    ) -> c_int;
+    fn msc_rules_add_file(
+        rules: *mut Rules,
+        file: *const c_char,
+        error: *mut *const c_char,
+    ) -> c_int;
 
-    fn msc_new_transaction(msc: *mut ModSecurity, rules: *mut Rules, log_cb: *mut c_void) -> *mut Transaction;
+    fn msc_new_transaction(
+        msc: *mut ModSecurity,
+        rules: *mut Rules,
+        log_cb: *mut c_void,
+    ) -> *mut Transaction;
     fn msc_transaction_cleanup(tx: *mut Transaction);
-    fn msc_process_uri(tx: *mut Transaction, uri: *const c_char, method: *const c_char, version: *const c_char) -> c_int;
-    fn msc_add_request_header(tx: *mut Transaction, key: *const c_char, value: *const c_char) -> c_int;
+    fn msc_process_uri(
+        tx: *mut Transaction,
+        uri: *const c_char,
+        method: *const c_char,
+        version: *const c_char,
+    ) -> c_int;
+    fn msc_add_request_header(
+        tx: *mut Transaction,
+        key: *const c_char,
+        value: *const c_char,
+    ) -> c_int;
     fn msc_process_request_headers(tx: *mut Transaction) -> c_int;
     fn msc_append_request_body(tx: *mut Transaction, body: *const u8, len: usize) -> c_int;
     fn msc_process_request_body(tx: *mut Transaction) -> c_int;
@@ -97,7 +118,9 @@ struct LibRules {
 impl LibRules {
     fn new() -> Self {
         unsafe {
-            Self { rules: msc_create_rules_set() }
+            Self {
+                rules: msc_create_rules_set(),
+            }
         }
     }
 
@@ -146,7 +169,12 @@ impl LibTransaction {
         let c_version = CString::new(version).unwrap();
 
         unsafe {
-            msc_process_uri(self.tx, c_uri.as_ptr(), c_method.as_ptr(), c_version.as_ptr());
+            msc_process_uri(
+                self.tx,
+                c_uri.as_ptr(),
+                c_method.as_ptr(),
+                c_version.as_ptr(),
+            );
         }
     }
 
@@ -308,9 +336,7 @@ fn bench_parsing_comparison(c: &mut Criterion) {
 
     // zentinel-modsec
     group.bench_function("zentinel/simple_rule", |b| {
-        b.iter(|| {
-            zentinel_modsec::ModSecurity::from_string(black_box(SIMPLE_RULE)).unwrap()
-        })
+        b.iter(|| zentinel_modsec::ModSecurity::from_string(black_box(SIMPLE_RULE)).unwrap())
     });
 
     // libmodsecurity
@@ -326,9 +352,7 @@ fn bench_parsing_comparison(c: &mut Criterion) {
 
     // Complex rule
     group.bench_function("zentinel/complex_rule", |b| {
-        b.iter(|| {
-            zentinel_modsec::ModSecurity::from_string(black_box(COMPLEX_RULE)).unwrap()
-        })
+        b.iter(|| zentinel_modsec::ModSecurity::from_string(black_box(COMPLEX_RULE)).unwrap())
     });
 
     group.bench_function("libmodsec/complex_rule", |b| {
@@ -365,7 +389,8 @@ fn bench_transaction_comparison(c: &mut Criterion) {
     group.bench_function("zentinel/clean_request", |b| {
         b.iter(|| {
             let mut tx = zentinel.new_transaction();
-            tx.process_uri(black_box("/api/users"), "GET", "HTTP/1.1").unwrap();
+            tx.process_uri(black_box("/api/users"), "GET", "HTTP/1.1")
+                .unwrap();
             tx.add_request_header("Host", "example.com").unwrap();
             tx.process_request_headers().unwrap();
             tx.process_request_body().unwrap();
@@ -389,7 +414,8 @@ fn bench_transaction_comparison(c: &mut Criterion) {
     group.bench_function("zentinel/sqli_request", |b| {
         b.iter(|| {
             let mut tx = zentinel.new_transaction();
-            tx.process_uri(black_box(attack_uri), "GET", "HTTP/1.1").unwrap();
+            tx.process_uri(black_box(attack_uri), "GET", "HTTP/1.1")
+                .unwrap();
             tx.add_request_header("Host", "example.com").unwrap();
             tx.process_request_headers().unwrap();
             tx.process_request_body().unwrap();
@@ -429,7 +455,8 @@ fn bench_body_comparison(c: &mut Criterion) {
     {
         let mut tx = zentinel.new_transaction();
         tx.process_uri("/api/login", "POST", "HTTP/1.1").unwrap();
-        tx.add_request_header("Content-Type", "application/x-www-form-urlencoded").unwrap();
+        tx.add_request_header("Content-Type", "application/x-www-form-urlencoded")
+            .unwrap();
         tx.process_request_headers().unwrap();
         tx.append_request_body(body).unwrap();
         tx.process_request_body().unwrap();
@@ -456,7 +483,8 @@ fn bench_body_comparison(c: &mut Criterion) {
             let mut tx = zentinel.new_transaction();
             tx.process_uri("/api/login", "POST", "HTTP/1.1").unwrap();
             tx.add_request_header("Host", "example.com").unwrap();
-            tx.add_request_header("Content-Type", "application/x-www-form-urlencoded").unwrap();
+            tx.add_request_header("Content-Type", "application/x-www-form-urlencoded")
+                .unwrap();
             tx.process_request_headers().unwrap();
             tx.append_request_body(black_box(body)).unwrap();
             tx.process_request_body().unwrap();

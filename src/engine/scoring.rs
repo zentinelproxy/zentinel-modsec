@@ -143,7 +143,10 @@ impl AnomalyScore {
         tx.set(LFI_SCORE.to_string(), self.lfi.to_string());
         tx.set(RCE_SCORE.to_string(), self.rce.to_string());
         tx.set(PHP_INJECTION_SCORE.to_string(), self.php.to_string());
-        tx.set(SESSION_FIXATION_SCORE.to_string(), self.session_fixation.to_string());
+        tx.set(
+            SESSION_FIXATION_SCORE.to_string(),
+            self.session_fixation.to_string(),
+        );
     }
 
     /// Load scores from TX collection.
@@ -198,8 +201,12 @@ mod tests {
         let mut tx = HashMapCollection::new();
         score.sync_to_tx(&mut tx);
 
-        let anomaly_val = tx.get(ANOMALY_SCORE).and_then(|v| v.first().map(|s| s.to_string()));
-        let sqli_val = tx.get(SQL_INJECTION_SCORE).and_then(|v| v.first().map(|s| s.to_string()));
+        let anomaly_val = tx
+            .get(ANOMALY_SCORE)
+            .and_then(|v| v.first().map(|s| s.to_string()));
+        let sqli_val = tx
+            .get(SQL_INJECTION_SCORE)
+            .and_then(|v| v.first().map(|s| s.to_string()));
         assert_eq!(anomaly_val, Some("15".to_string()));
         assert_eq!(sqli_val, Some("10".to_string()));
     }

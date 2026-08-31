@@ -1,16 +1,19 @@
 //! Action system for ModSecurity rule execution.
 
+mod data;
 mod disruptive;
 mod flow;
-mod data;
 mod metadata;
 
+pub use data::*;
 pub use disruptive::*;
 pub use flow::*;
-pub use data::*;
 pub use metadata::*;
 
-use crate::parser::{Action, ControlAction, DisruptiveAction, FlowAction, DataAction, MetadataAction, LoggingAction, SetVarValue};
+use crate::parser::{
+    Action, ControlAction, DataAction, DisruptiveAction, FlowAction, LoggingAction, MetadataAction,
+    SetVarValue,
+};
 
 /// Result of action execution.
 #[derive(Debug, Clone)]
@@ -275,7 +278,10 @@ fn execute_metadata(action: &MetadataAction, metadata: &mut RuleMetadata) {
 /// Execute a logging action.
 fn execute_logging(action: &LoggingAction, _metadata: &mut RuleMetadata) {
     match action {
-        LoggingAction::Log | LoggingAction::NoLog | LoggingAction::AuditLog | LoggingAction::NoAuditLog => {
+        LoggingAction::Log
+        | LoggingAction::NoLog
+        | LoggingAction::AuditLog
+        | LoggingAction::NoAuditLog => {
             // Logging flags handled elsewhere
         }
         LoggingAction::SanitiseMatched | LoggingAction::SanitizeMatched => {
@@ -298,7 +304,10 @@ mod tests {
     fn test_execute_deny() {
         let actions = vec![Action::Disruptive(DisruptiveAction::Deny)];
         let result = execute_actions(&actions, None, &[]);
-        assert!(matches!(result.disruptive, Some(DisruptiveOutcome::Deny(403))));
+        assert!(matches!(
+            result.disruptive,
+            Some(DisruptiveOutcome::Deny(403))
+        ));
     }
 
     #[test]

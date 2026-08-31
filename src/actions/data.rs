@@ -78,7 +78,7 @@ mod tests {
         };
         apply_setvar(&mut tx, &op);
         let values = tx.get("score");
-        assert_eq!(values.and_then(|v| v.first().map(|s| *s)), Some("5"));
+        assert_eq!(values.and_then(|v| v.first().copied()), Some("5"));
     }
 
     #[test]
@@ -92,7 +92,7 @@ mod tests {
         };
         apply_setvar(&mut tx, &op);
         let values = tx.get("score");
-        assert_eq!(values.and_then(|v| v.first().map(|s| *s)), Some("15"));
+        assert_eq!(values.and_then(|v| v.first().copied()), Some("15"));
     }
 
     #[test]
@@ -106,7 +106,7 @@ mod tests {
         };
         apply_setvar(&mut tx, &op);
         let values = tx.get("score");
-        assert_eq!(values.and_then(|v| v.first().map(|s| *s)), Some("7"));
+        assert_eq!(values.and_then(|v| v.first().copied()), Some("7"));
     }
 
     #[test]

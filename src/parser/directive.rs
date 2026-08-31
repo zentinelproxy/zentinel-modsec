@@ -22,7 +22,12 @@ pub enum Directive {
     /// SecRuleUpdateTargetById directive - update rule targets (CRS exclusions).
     SecRuleUpdateTargetById(UpdateTargetById),
     /// SecRuleUpdateActionById directive - update rule actions.
-    SecRuleUpdateActionById { id: u64, actions: Vec<Action> },
+    SecRuleUpdateActionById {
+        /// ID of the rule whose actions are being amended.
+        id: u64,
+        /// Actions to merge into that rule.
+        actions: Vec<Action>,
+    },
     /// SecRequestBodyAccess directive.
     SecRequestBodyAccess(bool),
     /// SecResponseBodyAccess directive.
@@ -110,20 +115,15 @@ pub struct SecMarker {
 }
 
 /// Rule engine mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RuleEngineMode {
     /// Rules are enabled and will block.
     On,
     /// Rules are disabled.
+    #[default]
     Off,
     /// Rules are enabled but will only log, not block.
     DetectionOnly,
-}
-
-impl Default for RuleEngineMode {
-    fn default() -> Self {
-        Self::Off
-    }
 }
 
 impl SecRule {

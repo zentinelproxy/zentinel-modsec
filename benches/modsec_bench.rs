@@ -3,7 +3,7 @@
 //! Run with: cargo bench
 //! Compare with libmodsecurity: cargo bench --features libmodsec-compare
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use std::time::Duration;
 use zentinel_modsec::ModSecurity;
 
@@ -125,23 +125,23 @@ fn bench_rule_parsing(c: &mut Criterion) {
     let mut group = c.benchmark_group("parsing");
 
     group.bench_function("simple_rule", |b| {
-        b.iter(|| ModSecurity::from_string(black_box(SIMPLE_RULE)).unwrap())
+        b.iter(|| ModSecurity::from_string(std::hint::black_box(SIMPLE_RULE)).unwrap())
     });
 
     group.bench_function("sqli_rule", |b| {
-        b.iter(|| ModSecurity::from_string(black_box(SQLI_RULE)).unwrap())
+        b.iter(|| ModSecurity::from_string(std::hint::black_box(SQLI_RULE)).unwrap())
     });
 
     group.bench_function("xss_rule", |b| {
-        b.iter(|| ModSecurity::from_string(black_box(XSS_RULE)).unwrap())
+        b.iter(|| ModSecurity::from_string(std::hint::black_box(XSS_RULE)).unwrap())
     });
 
     group.bench_function("complex_rule", |b| {
-        b.iter(|| ModSecurity::from_string(black_box(COMPLEX_RULE)).unwrap())
+        b.iter(|| ModSecurity::from_string(std::hint::black_box(COMPLEX_RULE)).unwrap())
     });
 
     group.bench_function("chain_rule", |b| {
-        b.iter(|| ModSecurity::from_string(black_box(CHAIN_RULE)).unwrap())
+        b.iter(|| ModSecurity::from_string(std::hint::black_box(CHAIN_RULE)).unwrap())
     });
 
     group.finish();
@@ -181,7 +181,7 @@ fn bench_crs_parsing(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(10));
 
     group.bench_function("crs_subset", |b| {
-        b.iter(|| ModSecurity::from_string(black_box(&crs_content)).unwrap())
+        b.iter(|| ModSecurity::from_string(std::hint::black_box(&crs_content)).unwrap())
     });
 
     group.finish();
@@ -213,7 +213,7 @@ fn bench_transaction_processing(c: &mut Criterion) {
     group.bench_function("clean_request", |b| {
         b.iter(|| {
             let mut tx = modsec.new_transaction();
-            tx.process_uri(black_box("/api/users"), "GET", "HTTP/1.1")
+            tx.process_uri(std::hint::black_box("/api/users"), "GET", "HTTP/1.1")
                 .unwrap();
             tx.add_request_header("Host", "example.com").unwrap();
             tx.add_request_header("User-Agent", "Mozilla/5.0").unwrap();
@@ -227,7 +227,7 @@ fn bench_transaction_processing(c: &mut Criterion) {
     group.bench_function("sqli_request", |b| {
         b.iter(|| {
             let mut tx = modsec.new_transaction();
-            tx.process_uri(black_box(attack_uri), "GET", "HTTP/1.1")
+            tx.process_uri(std::hint::black_box(attack_uri), "GET", "HTTP/1.1")
                 .unwrap();
             tx.add_request_header("Host", "example.com").unwrap();
             tx.process_request_headers().unwrap();
@@ -272,7 +272,8 @@ fn bench_body_processing(c: &mut Criterion) {
                 tx.add_request_header("Content-Type", "application/x-www-form-urlencoded")
                     .unwrap();
                 tx.process_request_headers().unwrap();
-                tx.append_request_body(black_box(body.as_bytes())).unwrap();
+                tx.append_request_body(std::hint::black_box(body.as_bytes()))
+                    .unwrap();
                 tx.process_request_body().unwrap();
                 tx.intervention().is_some()
             })
@@ -289,7 +290,7 @@ fn bench_body_processing(c: &mut Criterion) {
             tx.add_request_header("Content-Type", "application/x-www-form-urlencoded")
                 .unwrap();
             tx.process_request_headers().unwrap();
-            tx.append_request_body(black_box(attack_body.as_bytes()))
+            tx.append_request_body(std::hint::black_box(attack_body.as_bytes()))
                 .unwrap();
             tx.process_request_body().unwrap();
             tx.intervention().is_some()
@@ -304,7 +305,7 @@ fn bench_body_processing(c: &mut Criterion) {
 // ============================================================================
 
 fn bench_operators(c: &mut Criterion) {
-    use zentinel_modsec::operators::{create_operator, Operator};
+    use zentinel_modsec::operators::create_operator;
     use zentinel_modsec::parser::OperatorName;
 
     let mut group = c.benchmark_group("operators");
@@ -312,46 +313,46 @@ fn bench_operators(c: &mut Criterion) {
     // Regex operator
     let rx = create_operator(OperatorName::Rx, r"(?i)select.*from").unwrap();
     group.bench_function("rx_match", |b| {
-        b.iter(|| rx.execute(black_box("SELECT * FROM users")))
+        b.iter(|| rx.execute(std::hint::black_box("SELECT * FROM users")))
     });
     group.bench_function("rx_no_match", |b| {
-        b.iter(|| rx.execute(black_box("hello world")))
+        b.iter(|| rx.execute(std::hint::black_box("hello world")))
     });
 
     // Pattern match operator
     let pm = create_operator(OperatorName::Pm, "select union insert delete").unwrap();
     group.bench_function("pm_match", |b| {
-        b.iter(|| pm.execute(black_box("trying to union the data")))
+        b.iter(|| pm.execute(std::hint::black_box("trying to union the data")))
     });
     group.bench_function("pm_no_match", |b| {
-        b.iter(|| pm.execute(black_box("normal user input here")))
+        b.iter(|| pm.execute(std::hint::black_box("normal user input here")))
     });
 
     // SQL injection detection
     let sqli = create_operator(OperatorName::DetectSqli, "").unwrap();
     group.bench_function("detectSQLi_attack", |b| {
-        b.iter(|| sqli.execute(black_box("1' OR '1'='1")))
+        b.iter(|| sqli.execute(std::hint::black_box("1' OR '1'='1")))
     });
     group.bench_function("detectSQLi_clean", |b| {
-        b.iter(|| sqli.execute(black_box("normal search query")))
+        b.iter(|| sqli.execute(std::hint::black_box("normal search query")))
     });
 
     // XSS detection
     let xss = create_operator(OperatorName::DetectXss, "").unwrap();
     group.bench_function("detectXSS_attack", |b| {
-        b.iter(|| xss.execute(black_box("<script>alert(1)</script>")))
+        b.iter(|| xss.execute(std::hint::black_box("<script>alert(1)</script>")))
     });
     group.bench_function("detectXSS_clean", |b| {
-        b.iter(|| xss.execute(black_box("normal text content")))
+        b.iter(|| xss.execute(std::hint::black_box("normal text content")))
     });
 
     // Contains operator
     let contains = create_operator(OperatorName::Contains, "/admin").unwrap();
     group.bench_function("contains_match", |b| {
-        b.iter(|| contains.execute(black_box("/api/admin/users")))
+        b.iter(|| contains.execute(std::hint::black_box("/api/admin/users")))
     });
     group.bench_function("contains_no_match", |b| {
-        b.iter(|| contains.execute(black_box("/api/users/profile")))
+        b.iter(|| contains.execute(std::hint::black_box("/api/users/profile")))
     });
 
     group.finish();
@@ -362,44 +363,48 @@ fn bench_operators(c: &mut Criterion) {
 // ============================================================================
 
 fn bench_transformations(c: &mut Criterion) {
-    use zentinel_modsec::transformations::{create_transformation, Transformation};
+    use zentinel_modsec::transformations::create_transformation;
 
     let mut group = c.benchmark_group("transformations");
 
     // URL decode
     let urldecode = create_transformation("urlDecode").unwrap();
     group.bench_function("urlDecode", |b| {
-        b.iter(|| urldecode.transform(black_box("hello%20world%21")))
+        b.iter(|| urldecode.transform(std::hint::black_box("hello%20world%21")))
     });
 
     // Base64 decode
     let b64decode = create_transformation("base64Decode").unwrap();
     group.bench_function("base64Decode", |b| {
-        b.iter(|| b64decode.transform(black_box("SGVsbG8gV29ybGQh")))
+        b.iter(|| b64decode.transform(std::hint::black_box("SGVsbG8gV29ybGQh")))
     });
 
     // HTML entity decode
     let htmldecode = create_transformation("htmlEntityDecode").unwrap();
     group.bench_function("htmlEntityDecode", |b| {
-        b.iter(|| htmldecode.transform(black_box("&lt;script&gt;alert(1)&lt;/script&gt;")))
+        b.iter(|| {
+            htmldecode.transform(std::hint::black_box(
+                "&lt;script&gt;alert(1)&lt;/script&gt;",
+            ))
+        })
     });
 
     // Lowercase
     let lowercase = create_transformation("lowercase").unwrap();
     group.bench_function("lowercase", |b| {
-        b.iter(|| lowercase.transform(black_box("HELLO WORLD")))
+        b.iter(|| lowercase.transform(std::hint::black_box("HELLO WORLD")))
     });
 
     // Normalize path
     let normpath = create_transformation("normalizePath").unwrap();
     group.bench_function("normalizePath", |b| {
-        b.iter(|| normpath.transform(black_box("/foo/../bar/./baz")))
+        b.iter(|| normpath.transform(std::hint::black_box("/foo/../bar/./baz")))
     });
 
     // Command line
     let cmdline = create_transformation("cmdLine").unwrap();
     group.bench_function("cmdLine", |b| {
-        b.iter(|| cmdline.transform(black_box("CMD;/C;DIR")))
+        b.iter(|| cmdline.transform(std::hint::black_box("CMD;/C;DIR")))
     });
 
     group.finish();
@@ -436,7 +441,8 @@ SecRule REQUEST_URI "@contains /admin" "id:1,phase:1,deny"
             idx += 1;
 
             let mut tx = modsec.new_transaction();
-            tx.process_uri(black_box(uri), method, "HTTP/1.1").unwrap();
+            tx.process_uri(std::hint::black_box(uri), method, "HTTP/1.1")
+                .unwrap();
             tx.add_request_header("Host", "example.com").unwrap();
             tx.add_request_header("User-Agent", "Mozilla/5.0").unwrap();
             tx.process_request_headers().unwrap();
@@ -453,7 +459,8 @@ SecRule REQUEST_URI "@contains /admin" "id:1,phase:1,deny"
             idx += 1;
 
             let mut tx = modsec.new_transaction();
-            tx.process_uri(black_box(uri), "GET", "HTTP/1.1").unwrap();
+            tx.process_uri(std::hint::black_box(uri), "GET", "HTTP/1.1")
+                .unwrap();
             tx.add_request_header("Host", "example.com").unwrap();
             tx.process_request_headers().unwrap();
             tx.process_request_body().unwrap();
@@ -473,7 +480,8 @@ SecRule REQUEST_URI "@contains /admin" "id:1,phase:1,deny"
             idx += 1;
 
             let mut tx = modsec.new_transaction();
-            tx.process_uri(black_box(uri), "GET", "HTTP/1.1").unwrap();
+            tx.process_uri(std::hint::black_box(uri), "GET", "HTTP/1.1")
+                .unwrap();
             tx.add_request_header("Host", "example.com").unwrap();
             tx.process_request_headers().unwrap();
             tx.process_request_body().unwrap();

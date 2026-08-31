@@ -3,8 +3,10 @@
 /// ModSecurity processing phases.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(u8)]
+#[derive(Default)]
 pub enum Phase {
     /// Phase 1: Request headers
+    #[default]
     RequestHeaders = 1,
     /// Phase 2: Request body
     RequestBody = 2,
@@ -77,12 +79,6 @@ impl Phase {
     /// Check if this is a response phase.
     pub fn is_response_phase(&self) -> bool {
         matches!(self, Phase::ResponseHeaders | Phase::ResponseBody)
-    }
-}
-
-impl Default for Phase {
-    fn default() -> Self {
-        Phase::RequestHeaders
     }
 }
 

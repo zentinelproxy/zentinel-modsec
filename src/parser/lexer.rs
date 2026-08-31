@@ -107,6 +107,9 @@ impl<'a> Lexer<'a> {
     }
 
     /// Skip whitespace including newlines.
+    ///
+    /// Part of the tokenizer's API; no directive parser needs it yet.
+    #[allow(dead_code)]
     fn skip_all_whitespace(&mut self) {
         while let Some(&c) = self.input.peek() {
             if c.is_whitespace() {

@@ -120,7 +120,7 @@ static DANGEROUS_TAGS_AC: Lazy<AhoCorasick> = Lazy::new(|| {
     AhoCorasickBuilder::new()
         .ascii_case_insensitive(true)
         .match_kind(MatchKind::LeftmostFirst)
-        .build(&tags)
+        .build(tags)
         .expect("Dangerous tags AC should build")
 });
 
@@ -230,7 +230,7 @@ static EVENT_HANDLERS_AC: Lazy<AhoCorasick> = Lazy::new(|| {
     AhoCorasickBuilder::new()
         .ascii_case_insensitive(true)
         .match_kind(MatchKind::LeftmostFirst)
-        .build(&handlers)
+        .build(handlers)
         .expect("Event handlers AC should build")
 });
 
@@ -240,7 +240,7 @@ static DANGEROUS_SCHEMES_AC: Lazy<AhoCorasick> = Lazy::new(|| {
     AhoCorasickBuilder::new()
         .ascii_case_insensitive(true)
         .match_kind(MatchKind::LeftmostFirst)
-        .build(&schemes)
+        .build(schemes)
         .expect("Dangerous schemes AC should build")
 });
 
@@ -264,7 +264,7 @@ static QUICK_CHECK_AC: Lazy<AhoCorasick> = Lazy::new(|| {
     AhoCorasickBuilder::new()
         .ascii_case_insensitive(true)
         .match_kind(MatchKind::LeftmostFirst)
-        .build(&patterns)
+        .build(patterns)
         .expect("Quick check AC should build")
 });
 

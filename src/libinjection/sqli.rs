@@ -29,12 +29,21 @@ enum TokenType {
     /// Logical operator (AND, OR, NOT)
     Logic,
     /// Comparison operator (=, <>, !=, LIKE)
+    ///
+    /// Part of libinjection's token taxonomy. This port folds comparisons into
+    /// the operator token while tokenizing, so nothing constructs it yet; it is
+    /// kept so the enum still mirrors upstream.
+    #[allow(dead_code)]
     Comparison,
     /// Expression grouping (parentheses content)
     Expression,
     /// Unknown/other
     Unknown,
     /// End of input
+    ///
+    /// Kept to mirror libinjection's taxonomy; this port signals end of input by
+    /// exhausting the iterator rather than emitting a token.
+    #[allow(dead_code)]
     End,
 }
 
@@ -719,16 +728,16 @@ fn has_dangerous_patterns(tokens: &[Token]) -> bool {
     // Check for tautology (1=1, 'a'='a')
     for window in tokens.windows(3) {
         let (left, op, right) = (&window[0], &window[1], &window[2]);
-        if op.token_type == TokenType::Operator && op.value == "=" {
-            if (left.token_type == TokenType::Number
+        if op.token_type == TokenType::Operator
+            && op.value == "="
+            && ((left.token_type == TokenType::Number
                 && right.token_type == TokenType::Number
                 && left.value == right.value)
                 || (left.token_type == TokenType::String
                     && right.token_type == TokenType::String
-                    && left.value == right.value)
-            {
-                return true;
-            }
+                    && left.value == right.value))
+        {
+            return true;
         }
     }
 

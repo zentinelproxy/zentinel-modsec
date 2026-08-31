@@ -2,8 +2,8 @@
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
-use tracing::{error, info};
-use zentinel_modsec::{ModSecurity, Result, Transaction};
+use tracing::info;
+use zentinel_modsec::{ModSecurity, Result};
 
 #[derive(Parser)]
 #[command(name = "zentinel-modsec")]

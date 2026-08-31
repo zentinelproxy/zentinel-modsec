@@ -118,20 +118,15 @@ pub struct CompiledRuleset {
 }
 
 /// Rule engine operating mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RuleEngineMode {
     /// Rules are enabled and will block.
+    #[default]
     On,
     /// Rules are enabled but will only detect.
     DetectionOnly,
     /// Rules are disabled.
     Off,
-}
-
-impl Default for RuleEngineMode {
-    fn default() -> Self {
-        RuleEngineMode::On
-    }
 }
 
 impl CompiledRuleset {
@@ -349,8 +344,6 @@ fn extract_phase(actions: &[Action]) -> Phase {
     }
     Phase::RequestBody // ModSecurity default
 }
-
-/// Extract rule ID from actions.
 
 /// Check whether a rule's ID is covered by any `SecRuleRemoveById` selector.
 ///

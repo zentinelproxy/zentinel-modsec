@@ -11,6 +11,9 @@ pub struct VariableResolver<'a> {
     tx: &'a TxCollection,
     matched_var: Option<&'a str>,
     matched_vars: &'a [(String, String)],
+    /// Carried alongside the other resolver inputs for symmetry; no variable
+    /// reads it yet (`TX:0`..`TX:9` are served from the TX collection).
+    #[allow(dead_code)]
     captures: &'a [String],
 }
 

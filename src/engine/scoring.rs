@@ -4,14 +4,23 @@ use crate::variables::MutableCollection;
 
 /// Standard anomaly score variable names (CRS).
 pub const ANOMALY_SCORE: &str = "anomaly_score";
+/// TX key for the inbound score at which 949110 blocks.
 pub const INBOUND_ANOMALY_SCORE_THRESHOLD: &str = "inbound_anomaly_score_threshold";
+/// TX key for the outbound score at which 959100 blocks.
 pub const OUTBOUND_ANOMALY_SCORE_THRESHOLD: &str = "outbound_anomaly_score_threshold";
+/// TX key for the per-category SQL injection score.
 pub const SQL_INJECTION_SCORE: &str = "sql_injection_score";
+/// TX key for the per-category cross-site scripting score.
 pub const XSS_SCORE: &str = "xss_score";
+/// TX key for the per-category remote file inclusion score.
 pub const RFI_SCORE: &str = "rfi_score";
+/// TX key for the per-category local file inclusion score.
 pub const LFI_SCORE: &str = "lfi_score";
+/// TX key for the per-category remote command execution score.
 pub const RCE_SCORE: &str = "rce_score";
+/// TX key for the per-category PHP injection score.
 pub const PHP_INJECTION_SCORE: &str = "php_injection_score";
+/// TX key for the per-category session fixation score.
 pub const SESSION_FIXATION_SCORE: &str = "session_fixation_score";
 
 /// Default CRS thresholds by paranoia level.
@@ -76,7 +85,7 @@ impl ScoringConfig {
     /// Get score for severity level.
     pub fn score_for_severity(&self, severity: u8) -> i32 {
         match severity {
-            0 | 1 | 2 => self.critical_score,
+            0..=2 => self.critical_score,
             3 => self.error_score,
             4 => self.warning_score,
             5 => self.notice_score,

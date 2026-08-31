@@ -31,121 +31,213 @@ pub enum Selection {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum VariableName {
     // Request variables
+    /// `ARGS`
     Args,
+    /// `ARGS_GET`
     ArgsGet,
+    /// `ARGS_POST`
     ArgsPost,
+    /// `ARGS_NAMES`
     ArgsNames,
+    /// `ARGS_GET_NAMES`
     ArgsGetNames,
+    /// `ARGS_POST_NAMES`
     ArgsPostNames,
+    /// `ARGS_COMBINED_SIZE`
     ArgsCombinedSize,
+    /// `REQUEST_URI`
     RequestUri,
+    /// `REQUEST_URI_RAW`
     RequestUriRaw,
+    /// `REQUEST_FILENAME`
     RequestFilename,
+    /// `REQUEST_BASENAME`
     RequestBasename,
+    /// `REQUEST_LINE`
     RequestLine,
+    /// `REQUEST_METHOD`
     RequestMethod,
+    /// `REQUEST_PROTOCOL`
     RequestProtocol,
+    /// `REQUEST_HEADERS`
     RequestHeaders,
+    /// `REQUEST_HEADERS_NAMES`
     RequestHeadersNames,
+    /// `REQUEST_COOKIES`
     RequestCookies,
+    /// `REQUEST_COOKIES_NAMES`
     RequestCookiesNames,
+    /// `REQUEST_BODY`
     RequestBody,
+    /// `REQUEST_BODY_LENGTH`
     RequestBodyLength,
+    /// `QUERY_STRING`
     QueryString,
 
     // Response variables
+    /// `RESPONSE_STATUS`
     ResponseStatus,
+    /// `RESPONSE_PROTOCOL`
     ResponseProtocol,
+    /// `RESPONSE_HEADERS`
     ResponseHeaders,
+    /// `RESPONSE_HEADERS_NAMES`
     ResponseHeadersNames,
+    /// `RESPONSE_BODY`
     ResponseBody,
+    /// `RESPONSE_CONTENT_TYPE`
     ResponseContentType,
+    /// `RESPONSE_CONTENT_LENGTH`
     ResponseContentLength,
 
     // Server/Client info
+    /// `REMOTE_ADDR`
     RemoteAddr,
+    /// `REMOTE_PORT`
     RemotePort,
+    /// `REMOTE_HOST`
     RemoteHost,
+    /// `REMOTE_USER`
     RemoteUser,
+    /// `SERVER_ADDR`
     ServerAddr,
+    /// `SERVER_PORT`
     ServerPort,
+    /// `SERVER_NAME`
     ServerName,
 
     // Collections
+    /// `TX`
     Tx,
+    /// `SESSION`
     Session,
+    /// `ENV`
     Env,
+    /// `IP`
     Ip,
+    /// `GLOBAL`
     Global,
+    /// `RESOURCE`
     Resource,
+    /// `USER`
     User,
+    /// `GEO`
     Geo,
 
     // Matched data
+    /// `MATCHED_VAR`
     MatchedVar,
+    /// `MATCHED_VARS`
     MatchedVars,
+    /// `MATCHED_VAR_NAME`
     MatchedVarName,
+    /// `MATCHED_VARS_NAMES`
     MatchedVarsNames,
 
     // Time variables
+    /// `TIME`
     Time,
+    /// `TIME_EPOCH`
     TimeEpoch,
+    /// `TIME_DAY`
     TimeDay,
+    /// `TIME_HOUR`
     TimeHour,
+    /// `TIME_MIN`
     TimeMin,
+    /// `TIME_SEC`
     TimeSec,
+    /// `TIME_WDAY`
     TimeWday,
+    /// `TIME_MON`
     TimeMon,
+    /// `TIME_YEAR`
     TimeYear,
 
     // Files
+    /// `FILES`
     Files,
+    /// `FILES_SIZES`
     FilesSizes,
+    /// `FILES_TMPNAMES`
     FilesTmpnames,
+    /// `FILES_COMBINED_SIZE`
     FilesCombinedSize,
+    /// `FILES_NAMES`
     FilesNames,
 
     // Special
+    /// `UNIQUE_ID`
     UniqueId,
+    /// `INBOUND_ANOMALY_SCORE` — running inbound anomaly total.
     InboundAnomalyScore,
+    /// `OUTBOUND_ANOMALY_SCORE` — running outbound anomaly total.
     OutboundAnomalyScore,
+    /// `DURATION`
     Duration,
+    /// `MULTIPART_BOUNDARY_QUOTED` — the multipart boundary was quoted.
     MultipartBoundaryQuoted,
+    /// `MULTIPART_BOUNDARY_WHITESPACE` — whitespace surrounded the boundary.
     MultipartBoundaryWhitespace,
+    /// `MULTIPART_DATA_AFTER` — content followed the terminating boundary.
     MultipartDataAfter,
+    /// `MULTIPART_DATA_BEFORE` — content preceded the first boundary.
     MultipartDataBefore,
+    /// `MULTIPART_FILE_LIMIT_EXCEEDED` — more files than the configured limit.
     MultipartFileLimitExceeded,
+    /// `MULTIPART_HEADER_FOLDING` — a part header used line folding.
     MultipartHeaderFolding,
+    /// `MULTIPART_INVALID_HEADER_FOLDING` — malformed header folding.
     MultipartInvalidHeaderFolding,
+    /// `MULTIPART_INVALID_PART` — a part could not be parsed.
     MultipartInvalidPart,
+    /// `MULTIPART_INVALID_QUOTING` — malformed quoting in a part header.
     MultipartInvalidQuoting,
+    /// `MULTIPART_LF_LINE` — a line ended with LF rather than CRLF.
     MultipartLfLine,
+    /// `MULTIPART_MISSING_SEMICOLON` — a part header omitted a semicolon.
     MultipartMissingSemicolon,
+    /// `MULTIPART_STRICT_ERROR` — any of the strict multipart checks failed.
     MultipartStrictError,
+    /// `MULTIPART_UNMATCHED_BOUNDARY` — a boundary did not match the declared one.
     MultipartUnmatchedBoundary,
+    /// `MULTIPART_PART_HEADERS`
     MultipartPartHeaders,
 
     // XML
+    /// `XML`
     Xml,
 
     // Web server
+    /// `WEBSERVER_ERROR_LOG` — messages the web server logged for this transaction.
     WebserverErrorLog,
+    /// `HIGHEST_SEVERITY`
     HighestSeverity,
+    /// `STATUS_LINE`
     StatusLine,
+    /// `FULL_REQUEST`
     FullRequest,
+    /// `FULL_REQUEST_LENGTH`
     FullRequestLength,
 
     // Auth
+    /// `AUTH_TYPE`
     AuthType,
 
     // Request body processing
+    /// `REQBODY_PROCESSOR`
     ReqBodyProcessor,
+    /// `REQBODY_ERROR`
     ReqBodyError,
+    /// `REQBODY_ERROR_MSG`
     ReqBodyErrorMsg,
+    /// `REQBODY_PROCESSOR_ERROR`
     ReqBodyProcessorError,
+    /// `REQBODY_PROCESSOR_ERROR_MSG`
     ReqBodyProcessorErrorMsg,
 
     // Multipart strict
+    /// `MULTIPART_STRICT_ERROR`
     MultipartStrictCheck,
 }
 
@@ -376,6 +468,10 @@ static VARIABLE_MAP: phf::Map<&'static str, VariableName> = phf_map! {
 
 impl VariableName {
     /// Parse a variable name from a string (O(1) lookup).
+    // Not `std::str::FromStr`: an unrecognised SecLang token is a plain
+    // `None` here, not a parse error with a payload, and callers branch on
+    // that. Implementing the trait would force an error type nobody uses.
+    #[allow(clippy::should_implement_trait)]
     #[inline]
     pub fn from_str(s: &str) -> Option<Self> {
         // Fast path: check if already uppercase ASCII
@@ -440,8 +536,8 @@ pub fn parse_variables(input: &str) -> Result<Vec<VariableSpec>> {
         }
 
         // Handle exclusions (!VAR)
-        if part.starts_with('!') {
-            exclusions.push(part[1..].to_string());
+        if let Some(excluded) = part.strip_prefix('!') {
+            exclusions.push(excluded.to_string());
             continue;
         }
 

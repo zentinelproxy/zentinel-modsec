@@ -55,7 +55,7 @@ use zentinel_modsec::ModSecurity;
 /// Measured on CRS `main` (4.30.0-dev). The corpus is a moving target — it is
 /// pinned by whatever the checkout holds — so a drop after pulling a newer CRS
 /// is worth reading as new tests before reading it as a regression.
-const MIN_PASSING: u32 = 4080;
+const MIN_PASSING: u32 = 4103;
 
 /// Corpus stages that cannot be driven from here: an `encoded_request` payload,
 /// or an expectation that is not about rule IDs (`status`, `match_regex`).
@@ -321,9 +321,6 @@ fn crs_regression_corpus() {
 // --- the half the corpus cannot see ----------------------------------------
 
 #[test]
-#[ignore = "fails against this engine until zentinelproxy/zentinel-modsec#30 lands: \
-CRS 920100 denies every request because REQUEST_LINE is unimplemented and its negated \
-regex inverts. Remove this attribute with that fix."]
 fn stock_crs_blocks_attacks_and_passes_ordinary_traffic() {
     // Real blocking mode, default paranoia — the configuration an operator
     // actually deploys, and the one the corpus above is blind to.

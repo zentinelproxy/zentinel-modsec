@@ -429,42 +429,63 @@ impl Transformation for Utf8ToUnicode {
 pub struct CmdLine;
 
 impl Transformation for CmdLine {
+    /// Normalise a Windows/Unix command line the way ModSecurity does.
+    ///
+    /// The steps, and the order, are ModSecurity's:
+    ///
+    /// 1. delete backslashes, double quotes, single quotes and carets, which
+    ///    a shell treats as noise but which break naive pattern matching;
+    /// 2. turn commas, semicolons and any run of whitespace into a single
+    ///    space;
+    /// 3. delete a space that immediately precedes `/` or `(`;
+    /// 4. lowercase everything else.
+    ///
+    /// Step 3 is the one that matters most and was previously missing: CRS
+    /// regexes are written against the collapsed form. Rule 932140 looks for
+    /// `in\(`, with no space, so `for %v in (set) do cmd` only matches once
+    /// `in (set)` has become `in(set)`.
     fn transform<'a>(&self, input: &'a str) -> Cow<'a, str> {
-        let mut result = String::new();
-        let mut modified = false;
+        let mut result = String::with_capacity(input.len());
+        // Whether the last character written was a space we introduced, and so
+        // may still be removed by a following `/` or `(`.
+        let mut pending_space = false;
 
         for c in input.chars() {
             match c {
-                // Replace with space
-                ',' | ';' | '\'' | '"' | '`' => {
-                    result.push(' ');
-                    modified = true;
+                // Deleted outright.
+                '\\' | '"' | '\'' | '^' => {}
+                // Separators and whitespace collapse to one space.
+                ',' | ';' => {
+                    if !pending_space {
+                        result.push(' ');
+                        pending_space = true;
+                    }
                 }
-                // Remove caret (Windows escape)
-                '^' => {
-                    modified = true;
+                c if c.is_whitespace() => {
+                    if !pending_space {
+                        result.push(' ');
+                        pending_space = true;
+                    }
                 }
-                // Lowercase
-                c if c.is_ascii_uppercase() => {
-                    result.push(c.to_ascii_lowercase());
-                    modified = true;
+                // A space before either of these is dropped.
+                '/' | '(' => {
+                    if pending_space {
+                        result.pop();
+                    }
+                    pending_space = false;
+                    result.push(c);
                 }
                 _ => {
-                    result.push(c);
+                    pending_space = false;
+                    result.extend(c.to_lowercase());
                 }
             }
         }
 
-        // Compress whitespace
-        let compressed: String = result
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ");
-
-        if modified || compressed != result {
-            Cow::Owned(compressed)
-        } else {
+        if result == input {
             Cow::Borrowed(input)
+        } else {
+            Cow::Owned(result)
         }
     }
 
@@ -614,11 +635,21 @@ mod tests {
     #[test]
     fn test_cmdline() {
         let t = CmdLine;
-        // Semicolon replaced with space, uppercase to lowercase
-        assert_eq!(t.transform("CMD;/C"), "cmd /c");
-        // Caret is the Windows escape character - it's simply removed
+        // Caret is the Windows escape character - it is simply removed.
         assert_eq!(t.transform("echo^hello"), "echohello");
-        // Multiple transformations
-        assert_eq!(t.transform("CMD,/C;DIR"), "cmd /c dir");
+        // Backslashes and quotes are deleted, not replaced.
+        assert_eq!(t.transform(r"c:\\windows\\system32"), "c:windowssystem32");
+        assert_eq!(t.transform("\"cat\" '/etc/passwd'"), "cat/etc/passwd");
+        // Commas and semicolons become a space; runs collapse to one.
+        assert_eq!(t.transform("DIR,,,X"), "dir x");
+        assert_eq!(t.transform("a \t\n b"), "a b");
+        // A space before `/` or `(` is deleted -- this is what CRS regexes are
+        // written against, e.g. 932140 matching `in\(`.
+        assert_eq!(t.transform("CMD;/C"), "cmd/c");
+        assert_eq!(t.transform("CMD,/C;DIR"), "cmd/c dir");
+        assert_eq!(t.transform("for %v in (set) do cmd"), "for %v in(set) do cmd");
+        assert_eq!(t.transform("cat /etc/passwd"), "cat/etc/passwd");
+        // Nothing to change: borrowed, not reallocated.
+        assert!(matches!(t.transform("already normal"), Cow::Borrowed(_)));
     }
 }

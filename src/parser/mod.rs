@@ -34,6 +34,7 @@ pub use operator::{OperatorSpec, OperatorName};
 pub use action::{Action, DisruptiveAction, FlowAction, MetadataAction, DataAction, LoggingAction, ControlAction, SetVarSpec, SetVarValue, parse_actions};
 
 use crate::error::{Error, Result, SourceLocation};
+use std::collections::HashMap;
 use std::path::Path;
 
 /// Parser for ModSecurity configuration files.
@@ -42,8 +43,12 @@ pub struct Parser {
     directives: Vec<Directive>,
     /// Current source location for error reporting.
     location: SourceLocation,
-    /// Default actions to apply to rules.
-    default_actions: Vec<Action>,
+    /// Default actions to apply to rules, keyed by the phase they configure.
+    ///
+    /// `SecDefaultAction` is per-phase in ModSecurity -- CRS issues one for
+    /// each of the five phases -- so a single flat list would let the last
+    /// directive parsed govern every phase.
+    default_actions: HashMap<u8, Vec<Action>>,
 }
 
 impl Parser {
@@ -52,7 +57,7 @@ impl Parser {
         Self {
             directives: Vec::new(),
             location: SourceLocation::default(),
-            default_actions: Vec::new(),
+            default_actions: HashMap::new(),
         }
     }
 
@@ -187,7 +192,9 @@ impl Parser {
             actions = self.merge_default_actions(actions);
             actions
         } else {
-            self.default_actions.clone()
+            // No actions of its own: it still inherits the defaults for the
+            // phase it lands in, which with no `phase` action is phase 2.
+            self.defaults_for_phase(DEFAULT_PHASE).to_vec()
         };
 
         Ok(Directive::SecRule(SecRule {
@@ -257,7 +264,8 @@ impl Parser {
     fn parse_secdefaultaction(&mut self, lexer: &mut Lexer) -> Result<Directive> {
         let actions_str = self.expect_quoted_argument(lexer, "SecDefaultAction")?;
         let actions = action::parse_actions(&actions_str)?;
-        self.default_actions = actions.clone();
+        self.default_actions
+            .insert(phase_of(&actions).unwrap_or(DEFAULT_PHASE), actions.clone());
         Ok(Directive::SecDefaultAction(actions))
     }
 
@@ -464,16 +472,64 @@ impl Parser {
 
     /// Merge default actions with rule-specific actions.
     fn merge_default_actions(&self, rule_actions: Vec<Action>) -> Vec<Action> {
+        let phase = phase_of(&rule_actions).unwrap_or(DEFAULT_PHASE);
+        let defaults = self.defaults_for_phase(phase);
+
+        // `block` means "whatever disruptive action the defaults name", so the
+        // default's disruptive action has to be captured before the merge below
+        // discards it in favour of the rule's own.
+        let inherited_disruptive = defaults
+            .iter()
+            .find(|a| matches!(a, Action::Disruptive(_)))
+            .cloned();
+
         // Rule actions override defaults
-        let mut result = self.default_actions.clone();
+        let mut result = defaults.to_vec();
         for action in rule_actions {
             // Remove any existing action of the same specific type
             // (need to compare both outer and inner discriminants for nested enums)
             result.retain(|a| !actions_same_type(a, &action));
             result.push(action);
         }
+
+        // Resolve `block` against the inherited disruptive action. CRS sets
+        // `SecDefaultAction "phase:N,log,auditlog,pass"` and then tags nearly
+        // every rule `block`, meaning "score me, and let 949110 decide" -- so
+        // treating `block` as a deny of its own turns the anomaly-scoring model
+        // into block-on-first-match.
+        if let Some(pos) = result
+            .iter()
+            .position(|a| matches!(a, Action::Disruptive(DisruptiveAction::Block)))
+        {
+            match inherited_disruptive {
+                // A default that is itself `block` says nothing; leave it be.
+                Some(Action::Disruptive(DisruptiveAction::Block)) | None => {}
+                Some(inherited) => result[pos] = inherited,
+            }
+        }
+
         result
     }
+
+    /// Defaults configured for a phase, or none if that phase has no
+    /// `SecDefaultAction`.
+    fn defaults_for_phase(&self, phase: u8) -> &[Action] {
+        self.default_actions
+            .get(&phase)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+}
+
+/// The phase ModSecurity assigns when a rule does not name one.
+const DEFAULT_PHASE: u8 = 2;
+
+/// Phase named by a `phase:` action, if any.
+fn phase_of(actions: &[Action]) -> Option<u8> {
+    actions.iter().find_map(|a| match a {
+        Action::Metadata(MetadataAction::Phase(p)) => Some(*p),
+        _ => None,
+    })
 }
 
 impl Default for Parser {

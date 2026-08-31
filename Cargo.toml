@@ -87,6 +87,10 @@ libmodsec-compare = []
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
 tempfile = "3"
+# Reading the OWASP CRS regression corpus in tests/crs_conformance.rs
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+walkdir = "2"
 
 [[bench]]
 name = "modsec_bench"

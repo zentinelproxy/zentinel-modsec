@@ -1,7 +1,7 @@
 //! Variable resolution engine.
 
 use super::{RequestData, ResponseData, TxCollection};
-use crate::parser::{Selection, VariableName, VariableSpec};
+use crate::parser::{Selection, VariableName, VariableSpec, XmlTarget};
 use regex::Regex;
 
 /// Variable resolver for transaction context.
@@ -80,6 +80,41 @@ impl<'a> VariableResolver<'a> {
             }
             VariableName::RequestFilename => {
                 vec![("REQUEST_FILENAME".to_string(), self.request.path.clone())]
+            }
+            VariableName::RequestLine => {
+                // The request line as it arrived. CRS 920100 tests this with a
+                // negated regex, so leaving it unresolved made that rule match
+                // every request rather than none.
+                let uri = if self.request.uri_raw.is_empty() {
+                    &self.request.uri
+                } else {
+                    &self.request.uri_raw
+                };
+                vec![(
+                    "REQUEST_LINE".to_string(),
+                    format!("{} {} {}", self.request.method, uri, self.request.protocol),
+                )]
+            }
+            VariableName::RequestBasename => {
+                // Final path segment. ModSecurity splits on both separators, so
+                // a Windows-style path does not hide the basename.
+                let basename = self
+                    .request
+                    .path
+                    .rsplit(['/', '\\'])
+                    .next()
+                    .unwrap_or("")
+                    .to_string();
+                vec![("REQUEST_BASENAME".to_string(), basename)]
+            }
+            VariableName::ArgsCombinedSize => {
+                use super::collection::Collection;
+                let size: usize = [&self.request.args_get, &self.request.args_post]
+                    .iter()
+                    .flat_map(|c| c.all())
+                    .map(|(name, value)| name.len() + value.len())
+                    .sum();
+                vec![("ARGS_COMBINED_SIZE".to_string(), size.to_string())]
             }
             VariableName::RequestBody => {
                 vec![("REQUEST_BODY".to_string(), self.request.body_str())]
@@ -197,6 +232,8 @@ impl<'a> VariableResolver<'a> {
             }
 
             // TX collection
+            VariableName::Xml => self.resolve_xml(selection),
+
             VariableName::Tx => self.resolve_tx_collection(selection),
 
             // Client/Server info
@@ -311,6 +348,47 @@ impl<'a> VariableResolver<'a> {
     }
 
     /// Resolve ARGS collection (GET + POST combined).
+    /// Resolve an `XML:` target against the flattened XML body.
+    ///
+    /// The XML body processor flattens element text to `xml.<path>` and
+    /// attributes to `xml.<path>.@<name>` in `ARGS`. `XML:/*` and `XML://@*`
+    /// are exactly those two sets, so they are answered from the flattening
+    /// rather than by evaluating XPath.
+    ///
+    /// Values are reported under their XPath-style name -- `xml.order.item.@id`
+    /// is reported as `XML:/order/item/@id` -- so `%{MATCHED_VAR_NAME}` in a
+    /// rule's `logdata` names the node the way the rule addressed it.
+    fn resolve_xml(&self, selection: &Option<Selection>) -> Vec<(String, String)> {
+        use super::collection::Collection;
+
+        let Some(target) = XmlTarget::from_selection(selection.as_ref()) else {
+            // An XPath expression this engine cannot express. Reported when the
+            // rules load, so there is nothing to say per request.
+            return vec![];
+        };
+
+        self.request
+            .args_post
+            .all()
+            .into_iter()
+            .filter_map(|(name, value)| {
+                let path = name.strip_prefix("xml.")?;
+                // An XML element name cannot begin with `@`, so `.@` only ever
+                // marks the attribute segment this processor appends.
+                let is_attribute = path.contains(".@");
+                let wanted = match target {
+                    XmlTarget::Elements => !is_attribute,
+                    XmlTarget::Attributes => is_attribute,
+                    XmlTarget::All => true,
+                };
+                if !wanted {
+                    return None;
+                }
+                Some((format!("XML:/{}", path.replace('.', "/")), value.to_string()))
+            })
+            .collect()
+    }
+
     fn resolve_collection_from_all_args(&self, selection: &Option<Selection>) -> Vec<(String, String)> {
         let mut result = self.resolve_collection(&self.request.args_get, "ARGS", selection);
         result.extend(self.resolve_collection(&self.request.args_post, "ARGS", selection));

@@ -65,15 +65,23 @@ impl Intervention {
         intervention
     }
 
-    /// Add a rule ID.
+    /// Add a rule ID, ignoring one already recorded.
+    ///
+    /// A rule reports its id both directly and through its metadata, so without
+    /// this the triggering rule appears twice -- which reaches operators as a
+    /// duplicated `X-WAF-Rule` and audit entry.
     pub fn add_rule_id(&mut self, id: String) {
-        self.rule_ids.push(id);
+        if !self.rule_ids.contains(&id) {
+            self.rule_ids.push(id);
+        }
     }
 
     /// Add metadata from a matched rule.
     pub fn add_metadata(&mut self, metadata: RuleMetadata) {
         if let Some(ref id) = metadata.id {
-            self.rule_ids.push(id.clone());
+            if !self.rule_ids.contains(id) {
+                self.rule_ids.push(id.clone());
+            }
         }
         if let Some(ref msg) = metadata.msg {
             if self.log.is_none() {

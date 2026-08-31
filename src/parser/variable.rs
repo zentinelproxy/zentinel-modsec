@@ -80,6 +80,53 @@ pub enum VariableName {
     MultipartStrictCheck,
 }
 
+impl VariableName {
+    /// Whether the resolver can produce a value for this variable.
+    ///
+    /// A variable the parser accepts but the resolver has no arm for silently
+    /// resolves to nothing, which makes a rule targeting it dead. Callers use
+    /// this to say so at load time instead of leaving it to be discovered from
+    /// traffic. The match is deliberately exhaustive: a new variant will not
+    /// compile until it has been classified here.
+    pub fn is_implemented(&self) -> bool {
+        match self {
+            VariableName::Args | VariableName::ArgsGet | VariableName::ArgsPost |
+            VariableName::ArgsNames | VariableName::ArgsGetNames | VariableName::ArgsPostNames |
+            VariableName::ArgsCombinedSize | VariableName::RequestUri | VariableName::RequestUriRaw |
+            VariableName::RequestFilename | VariableName::RequestBasename | VariableName::RequestLine |
+            VariableName::RequestMethod | VariableName::RequestProtocol | VariableName::RequestHeaders |
+            VariableName::RequestHeadersNames | VariableName::RequestCookies | VariableName::RequestCookiesNames |
+            VariableName::RequestBody | VariableName::RequestBodyLength | VariableName::QueryString |
+            VariableName::ResponseStatus | VariableName::ResponseHeaders | VariableName::ResponseBody |
+            VariableName::ResponseContentType | VariableName::RemoteAddr | VariableName::RemotePort |
+            VariableName::ServerAddr | VariableName::ServerPort | VariableName::ServerName |
+            VariableName::Tx | VariableName::MatchedVar | VariableName::MatchedVars |
+            VariableName::MatchedVarName | VariableName::MatchedVarsNames | VariableName::Files |
+            VariableName::FilesNames | VariableName::MultipartPartHeaders | VariableName::ReqBodyProcessor |
+            VariableName::ReqBodyError | VariableName::ReqBodyErrorMsg | VariableName::ReqBodyProcessorError |
+            VariableName::ReqBodyProcessorErrorMsg => true,
+
+            VariableName::ResponseProtocol | VariableName::ResponseHeadersNames | VariableName::ResponseContentLength |
+            VariableName::RemoteHost | VariableName::RemoteUser | VariableName::Session |
+            VariableName::Env | VariableName::Ip | VariableName::Global |
+            VariableName::Resource | VariableName::User | VariableName::Geo |
+            VariableName::Time | VariableName::TimeEpoch | VariableName::TimeDay |
+            VariableName::TimeHour | VariableName::TimeMin | VariableName::TimeSec |
+            VariableName::TimeWday | VariableName::TimeMon | VariableName::TimeYear |
+            VariableName::FilesSizes | VariableName::FilesTmpnames | VariableName::FilesCombinedSize |
+            VariableName::UniqueId | VariableName::InboundAnomalyScore | VariableName::OutboundAnomalyScore |
+            VariableName::Duration | VariableName::MultipartBoundaryQuoted | VariableName::MultipartBoundaryWhitespace |
+            VariableName::MultipartDataAfter | VariableName::MultipartDataBefore | VariableName::MultipartFileLimitExceeded |
+            VariableName::MultipartHeaderFolding | VariableName::MultipartInvalidHeaderFolding | VariableName::MultipartInvalidPart |
+            VariableName::MultipartInvalidQuoting | VariableName::MultipartLfLine | VariableName::MultipartMissingSemicolon |
+            VariableName::MultipartStrictError | VariableName::MultipartUnmatchedBoundary | VariableName::Xml |
+            VariableName::WebserverErrorLog | VariableName::HighestSeverity | VariableName::StatusLine |
+            VariableName::FullRequest | VariableName::FullRequestLength | VariableName::AuthType |
+            VariableName::MultipartStrictCheck => false,
+        }
+    }
+}
+
 /// Perfect hash map for O(1) variable name lookup.
 static VARIABLE_MAP: phf::Map<&'static str, VariableName> = phf_map! {
     "ARGS" => VariableName::Args,

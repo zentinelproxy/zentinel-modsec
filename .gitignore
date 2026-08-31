@@ -6,3 +6,4 @@ Cargo.lock
 .idea/
 .vscode/
 *.log
+/test-rules

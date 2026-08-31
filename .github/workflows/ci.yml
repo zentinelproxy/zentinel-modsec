@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-test-${{ hashFiles('Cargo.toml') }}
+          restore-keys: ${{ runner.os }}-cargo-test-
+      # The CRS corpus is a separate job: it needs a checkout of the rule set
+      # and is worth running optimised. Skipping it here keeps this job fast
+      # rather than leaving it unrun — see the `conformance` job below.
+      - run: cargo test --all-targets
+        env:
+          SKIP_CRS_CONFORMANCE: 1
+      - run: cargo test --doc
+
+  conformance:
+    name: OWASP CRS conformance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-conformance-${{ hashFiles('Cargo.toml') }}
+          restore-keys: ${{ runner.os }}-cargo-conformance-
+      - name: Fetch OWASP CRS
+        run: |
+          mkdir -p test-rules
+          git clone --depth 1 https://github.com/coreruleset/coreruleset.git test-rules/crs
+          cp test-rules/crs/crs-setup.conf.example test-rules/crs/crs-setup.conf
+          git -C test-rules/crs log -1 --format='CRS %h %ci'
+      # Release: ~14s against the corpus, versus minutes unoptimised. This job
+      # must not set SKIP_CRS_CONFORMANCE — that is what makes the gate real.
+      - run: cargo test --release --test crs_conformance -- --nocapture

@@ -4,9 +4,14 @@
 [![Documentation](https://docs.rs/zentinel-modsec/badge.svg)](https://docs.rs/zentinel-modsec)
 [![License](https://img.shields.io/crates/l/zentinel-modsec.svg)](LICENSE)
 
-**Pure Rust ModSecurity implementation with full OWASP CRS compatibility.**
+**Pure Rust ModSecurity rule engine, measured against the OWASP CRS regression suite.**
 
-A complete ModSecurity rule engine written in Rust with zero C/C++ dependencies. Load and execute OWASP Core Rule Set (CRS) rules for web application firewall (WAF) functionality in any Rust application.
+A ModSecurity rule engine written in Rust with zero C/C++ dependencies. Loads and
+executes OWASP Core Rule Set (CRS) rules for web application firewall (WAF)
+functionality in any Rust application.
+
+CRS compatibility is reported as a number rather than asserted: see
+[CRS conformance](#crs-conformance) below.
 
 ## Performance: 4-11x Faster than libmodsecurity
 
@@ -39,7 +44,7 @@ absolute numbers, which are hardware-dependent. Reproduce with
 
 ## Features
 
-- **Full OWASP CRS Compatibility** - Parse and execute 800+ CRS rules
+- **Loads the stock OWASP CRS** - all 703 rules of CRS 4.30 parse and execute; conformance is [measured on every push](#crs-conformance)
 - **Pure Rust** - No libmodsecurity, no C/C++ dependencies, no FFI
 - **SecLang Support** - Load standard ModSecurity `.conf` rule files
 - **Built-in Detection** - Native `@detectSQLi` and `@detectXSS` operators (pure Rust libinjection)
@@ -447,6 +452,74 @@ EOF
 let modsec = zentinel_modsec::ModSecurity::from_file("/etc/modsecurity/main.conf")?;
 ```
 
+## CRS conformance
+
+The OWASP CRS ships a regression suite of roughly 5,000 request/expectation
+pairs, each naming the rule IDs that must — or must not — appear in the log for
+a given request. `tests/crs_conformance.rs` runs that corpus against this engine
+on every push, and CI fails if the number goes down.
+
+| | |
+|---|---|
+| Corpus | CRS `main` (4.30.0-dev), 5,033 runnable cases |
+| Passing | **4,608 (91.6%)** |
+| Not runnable here | 41 — `encoded_request` payloads, and expectations about status rather than rule IDs |
+
+Reproduce it:
+
+```bash
+mkdir -p test-rules
+git clone --depth 1 https://github.com/coreruleset/coreruleset.git test-rules/crs
+cp test-rules/crs/crs-setup.conf.example test-rules/crs/crs-setup.conf
+cargo test --release --test crs_conformance -- --nocapture
+```
+
+### What that number does and does not tell you
+
+The corpus runs in the configuration CRS documents for it: `DetectionOnly` at
+paranoia level 4. In that mode `block` never blocks, the paranoia gates never
+fire, and the anomaly score never reaches rule 949110 — so it measures whether
+individual rules **match**, and says nothing about whether the WAF **decides**
+correctly.
+
+That distinction is not academic. A set of defects that made a stock CRS
+deployment deny every request, `GET /` included, moved this number by 23 out of
+5,033, because none of the machinery they broke runs in this configuration.
+
+`stock_crs_blocks_attacks_and_passes_ordinary_traffic` in the same file covers
+the other half — real blocking mode, default paranoia, asserting the decision
+for ordinary requests and for attacks. Both are needed; neither substitutes for
+the other.
+
+### How it got here
+
+| | corpus |
+|---|---|
+| Before this work | 4,080 (81.1%) |
+| Stock CRS evaluation — `skipAfter` in phase ≥ 2, `TX` key case, `block` semantics, `REQUEST_LINE` ([#29](https://github.com/zentinelproxy/zentinel-modsec/issues/29)) | 4,103 |
+| `+` decoded as a space in form-encoded arguments ([#34](https://github.com/zentinelproxy/zentinel-modsec/issues/34)) | 4,228 |
+| Form parameter with no `=` kept rather than dropped ([#38](https://github.com/zentinelproxy/zentinel-modsec/issues/38)) | 4,541 |
+| `t:cmdLine` completed ([#31](https://github.com/zentinelproxy/zentinel-modsec/issues/31)) | **4,608** |
+
+Two of those were bypasses — `+` encoding and the missing `=` each let a
+payload reach the application while the engine inspected nothing.
+
+Note that #29 barely moves this number while being by far the most serious of
+the four: in `DetectionOnly` none of the machinery it broke runs. It is the
+clearest illustration of why the corpus alone is not a health check.
+
+### Known gaps
+
+The remaining ~8% is a long tail rather than one cause — the largest single
+rule file accounts for 21 cases. Known specifics:
+
+- `UNIQUE_ID` and `FILES_COMBINED_SIZE` are unimplemented; rules targeting only
+  those are inert and are reported at load time.
+- XPath selection of XML is not supported. `XML:/*` and `XML://@*` — every
+  `XML:` target in stock CRS — resolve against the flattened body; richer XPath
+  expressions are reported when the rules load rather than silently matching
+  nothing.
+
 ## Comparison
 
 | Feature | zentinel-modsec | libmodsecurity | mod_security |
@@ -454,7 +527,7 @@ let modsec = zentinel_modsec::ModSecurity::from_file("/etc/modsecurity/main.conf
 | Language | Pure Rust | C++ | C |
 | Dependencies | None | PCRE, libxml2, etc. | Apache/nginx |
 | Performance | 676K req/s | 168K req/s | ~200K req/s |
-| CRS Compatible | ✅ | ✅ | ✅ |
+| CRS conformance | [measured](#crs-conformance) | reference implementation | reference implementation |
 | WASM Support | ✅ | ❌ | ❌ |
 | Memory Safety | ✅ Guaranteed | ❌ Manual | ❌ Manual |
 

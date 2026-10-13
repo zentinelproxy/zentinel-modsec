@@ -77,7 +77,10 @@ impl<'a> Lexer<'a> {
     pub fn skip_whitespace(&mut self) {
         loop {
             match self.input.peek() {
-                Some(&' ') | Some(&'\t') => {
+                // '\r' is whitespace too: a CRLF file would otherwise stop the
+                // token stream at the first line end and silently drop every
+                // directive after it.
+                Some(&' ') | Some(&'\t') | Some(&'\r') => {
                     self.advance();
                 }
                 Some(&'\\') => {
@@ -159,8 +162,9 @@ impl<'a> Lexer<'a> {
                 })
             }
             '\\' => {
-                // Line continuation
+                // Line continuation (LF or CRLF)
                 self.advance();
+                self.skip_cr_before_lf();
                 if self.peek() == Some('\n') {
                     self.advance();
                 }
@@ -184,6 +188,18 @@ impl<'a> Lexer<'a> {
                 };
 
                 Some(Token { kind, line, column })
+            }
+        }
+    }
+
+    /// Consume a `\r` that directly precedes `\n`, so a CRLF line ending is
+    /// treated like LF wherever a line continuation is recognised.
+    fn skip_cr_before_lf(&mut self) {
+        if self.input.peek() == Some(&'\r') {
+            let mut ahead = self.input.clone();
+            ahead.next();
+            if ahead.peek() == Some(&'\n') {
+                self.advance();
             }
         }
     }
@@ -244,6 +260,7 @@ impl<'a> Lexer<'a> {
             if c == '\\' {
                 // Check for line continuation
                 self.advance();
+                self.skip_cr_before_lf();
                 if self.peek() == Some('\n') {
                     self.advance();
                     // Continue reading on next line
@@ -335,5 +352,27 @@ mod tests {
 
         let token = lexer.next_token().unwrap();
         assert!(matches!(token.kind, TokenKind::QuotedString(s) if s == "id:1,deny"));
+    }
+
+    #[test]
+    fn test_crlf_line_endings_do_not_end_the_token_stream() {
+        let mut lexer =
+            Lexer::new("SecRuleEngine On\r\nSecRule REQUEST_URI \"@contains a\" \"id:1,deny\"\r\n");
+        let mut directives = 0;
+        while let Some(t) = lexer.next_token() {
+            if matches!(t.kind, TokenKind::Directive(_)) {
+                directives += 1;
+            }
+        }
+        assert_eq!(directives, 2, "both directives must be seen");
+    }
+
+    #[test]
+    fn test_crlf_line_continuation() {
+        let mut lexer = Lexer::new("SecRule \\\r\n  REQUEST_URI");
+        let token = lexer.next_token().unwrap();
+        assert!(matches!(token.kind, TokenKind::Directive(s) if s == "SecRule"));
+        let token = lexer.next_token().unwrap();
+        assert!(matches!(token.kind, TokenKind::Word(s) if s == "REQUEST_URI"));
     }
 }

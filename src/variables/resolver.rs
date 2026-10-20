@@ -2,7 +2,35 @@
 
 use super::{RequestData, ResponseData, TxCollection};
 use crate::parser::{Selection, VariableName, VariableSpec, XmlTarget};
+use once_cell::sync::Lazy;
 use regex::Regex;
+use std::collections::HashMap;
+use std::sync::RwLock;
+
+/// Compile a regex written in rule text (an `ARGS:/.../` selection or a
+/// `!ARGS:/.../` exclusion), once per pattern.
+///
+/// These used to be compiled on every evaluation, once per resolved key for an
+/// exclusion. Compiling costs orders of magnitude more than matching: CRS
+/// 942431's two `!ARGS_NAMES:/.../` exclusions took ~5.5ms per request on
+/// clean traffic, for patterns that never change.
+///
+/// Patterns come only from loaded rules, so the cache is bounded by the rule
+/// set. A pattern that does not compile is cached as `None` and never matches,
+/// as before. `Regex` clones share the compiled program.
+fn cached_regex(pattern: &str) -> Option<Regex> {
+    static CACHE: Lazy<RwLock<HashMap<String, Option<Regex>>>> = Lazy::new(Default::default);
+    if let Some(hit) = CACHE.read().unwrap_or_else(|e| e.into_inner()).get(pattern) {
+        return hit.clone();
+    }
+    let compiled = Regex::new(pattern).ok();
+    CACHE
+        .write()
+        .unwrap_or_else(|e| e.into_inner())
+        .entry(pattern.to_string())
+        .or_insert(compiled)
+        .clone()
+}
 
 /// Variable resolver for transaction context.
 pub struct VariableResolver<'a> {
@@ -336,7 +364,7 @@ impl<'a> VariableResolver<'a> {
                 }
             }
             Some(Selection::Regex(pattern)) => {
-                if let Ok(re) = Regex::new(pattern) {
+                if let Some(re) = cached_regex(pattern) {
                     collection
                         .get_regex(&re)
                         .into_iter()
@@ -424,7 +452,7 @@ impl<'a> VariableResolver<'a> {
             for (key, _) in collection.all() {
                 let selected = match selection {
                     Some(Selection::Key(sel)) => key.eq_ignore_ascii_case(sel),
-                    Some(Selection::Regex(pattern)) => Regex::new(pattern)
+                    Some(Selection::Regex(pattern)) => cached_regex(pattern)
                         .map(|re| re.is_match(key))
                         .unwrap_or(false),
                     None => true,
@@ -453,7 +481,7 @@ impl<'a> VariableResolver<'a> {
                 }
             }
             Some(Selection::Regex(pattern)) => {
-                if let Ok(re) = Regex::new(pattern) {
+                if let Some(re) = cached_regex(pattern) {
                     self.tx
                         .get_regex(&re)
                         .into_iter()
@@ -491,7 +519,7 @@ fn exclusion_matches(key: &str, exclusion: &str) -> bool {
                 return false;
             }
             if excl_sel.len() > 2 && excl_sel.starts_with('/') && excl_sel.ends_with('/') {
-                Regex::new(&excl_sel[1..excl_sel.len() - 1])
+                cached_regex(&excl_sel[1..excl_sel.len() - 1])
                     .map(|re| re.is_match(key_member))
                     .unwrap_or(false)
             } else {
@@ -507,7 +535,18 @@ fn exclusion_matches(key: &str, exclusion: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::exclusion_matches;
+    use super::{cached_regex, exclusion_matches};
+
+    #[test]
+    fn test_cached_regex_compiles_once_and_keeps_invalid_patterns_dead() {
+        let a = cached_regex(r"^user_\d+$").expect("valid pattern");
+        let b = cached_regex(r"^user_\d+$").expect("valid pattern");
+        assert!(a.is_match("user_42") && b.is_match("user_42"));
+        // An invalid pattern stays a never-matching selection, cached or not.
+        assert!(cached_regex("(unclosed").is_none());
+        assert!(cached_regex("(unclosed").is_none());
+        assert!(!exclusion_matches("ARGS:x", "ARGS:/(unclosed/"));
+    }
 
     #[test]
     fn test_exclusion_exact_key() {

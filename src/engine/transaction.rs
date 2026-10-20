@@ -778,23 +778,28 @@ impl Transaction {
     /// macros in CRS, e.g. thresholds and `tx.allowed_methods`); an unresolved
     /// macro expands to an empty string, matching ModSecurity behaviour.
     fn expand_operator_macros(&self, arg: &str) -> String {
-        let re = regex::Regex::new(r"%\{([^}]+)\}").expect("static macro regex is valid");
-        re.replace_all(arg, |caps: &regex::Captures| {
-            let inner = &caps[1];
-            let (collection, name) = match inner.split_once('.') {
-                Some((c, n)) => (c.to_ascii_lowercase(), n),
-                None => ("tx".to_string(), inner),
-            };
-            if collection == "tx" {
-                self.tx
-                    .get(name)
-                    .and_then(|v| v.first().map(|s| s.to_string()))
-                    .unwrap_or_default()
-            } else {
-                String::new()
-            }
-        })
-        .into_owned()
+        // Compiled once: this runs on every evaluation of an operator whose
+        // argument contains `%{`.
+        static MACRO: once_cell::sync::Lazy<regex::Regex> = once_cell::sync::Lazy::new(|| {
+            regex::Regex::new(r"%\{([^}]+)\}").expect("static macro regex is valid")
+        });
+        MACRO
+            .replace_all(arg, |caps: &regex::Captures| {
+                let inner = &caps[1];
+                let (collection, name) = match inner.split_once('.') {
+                    Some((c, n)) => (c.to_ascii_lowercase(), n),
+                    None => ("tx".to_string(), inner),
+                };
+                if collection == "tx" {
+                    self.tx
+                        .get(name)
+                        .and_then(|v| v.first().map(|s| s.to_string()))
+                        .unwrap_or_default()
+                } else {
+                    String::new()
+                }
+            })
+            .into_owned()
     }
 
     /// Apply a setvar operation.

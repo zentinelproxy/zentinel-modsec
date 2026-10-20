@@ -52,10 +52,11 @@ use zentinel_modsec::ModSecurity;
 /// Cases the corpus must still pass. Raise it when a fix lands; never lower it
 /// without saying which rules regressed and why.
 ///
-/// Measured on CRS `main` (4.30.0-dev). The corpus is a moving target — it is
-/// pinned by whatever the checkout holds — so a drop after pulling a newer CRS
-/// is worth reading as new tests before reading it as a regression.
-const MIN_PASSING: u32 = 4608;
+/// Measured on CRS `main` (4.31.0-dev, 30cb436). The corpus is a moving
+/// target — it is pinned by whatever the checkout holds — so a drop after
+/// pulling a newer CRS is worth reading as new tests before reading it as a
+/// regression.
+const MIN_PASSING: u32 = 4806;
 
 /// Corpus stages that cannot be driven from here: an `encoded_request` payload,
 /// or an expectation that is not about rule IDs (`status`, `match_regex`).

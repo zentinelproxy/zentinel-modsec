@@ -461,8 +461,8 @@ on every push, and CI fails if the number goes down.
 
 | | |
 |---|---|
-| Corpus | CRS `main` (4.30.0-dev), 5,033 runnable cases |
-| Passing | **4,608 (91.6%)** |
+| Corpus | CRS `main` (4.31.0-dev), 5,184 runnable cases |
+| Passing | **4,806 (92.7%)** |
 | Not runnable here | 41 — `encoded_request` payloads, and expectations about status rather than rule IDs |
 
 Reproduce it:

@@ -486,14 +486,19 @@ impl Parser {
             .find(|a| matches!(a, Action::Disruptive(_)))
             .cloned();
 
-        // Rule actions override defaults
+        // A rule's actions replace the defaults they supersede (a `nolog`
+        // displaces the default `log`), but must not displace each other:
+        // `t:a,t:b`, `setvar:x,setvar:y`, `tag:a,tag:b` and `ctl:a,ctl:b` are
+        // all meant to apply, in order. Only a single-valued action given
+        // twice in one rule (two `msg:`, say) keeps just the last.
         let mut result = defaults.to_vec();
+        let mut own: Vec<Action> = Vec::with_capacity(rule_actions.len());
         for action in rule_actions {
-            // Remove any existing action of the same specific type
-            // (need to compare both outer and inner discriminants for nested enums)
-            result.retain(|a| !actions_same_type(a, &action));
-            result.push(action);
+            result.retain(|a| !action_supersedes(&action, a));
+            own.retain(|a| !action_supersedes(&action, a));
+            own.push(action);
         }
+        result.extend(own);
 
         // Resolve `block` against the inherited disruptive action. CRS sets
         // `SecDefaultAction "phase:N,log,auditlog,pass"` and then tags nearly
@@ -541,15 +546,35 @@ impl Default for Parser {
     }
 }
 
-/// Check if two actions are of the same specific type (including inner variants).
-fn actions_same_type(a: &Action, b: &Action) -> bool {
-    match (a, b) {
-        // For Metadata, compare inner variants
-        (Action::Metadata(ma), Action::Metadata(mb)) => {
-            std::mem::discriminant(ma) == std::mem::discriminant(mb)
+/// Whether `new` supersedes `old`, so that `old` must be dropped when both are
+/// present.
+///
+/// Actions that may legitimately repeat (transformations, `setvar`, `tag`,
+/// `ctl`, `initcol`, ...) never supersede anything. Single-valued actions
+/// supersede an earlier action of the same kind; `log`/`nolog` and
+/// `auditlog`/`noauditlog` are opposites of one switch and supersede each other.
+fn action_supersedes(new: &Action, old: &Action) -> bool {
+    match (new, old) {
+        (Action::Disruptive(_), Action::Disruptive(_)) => true,
+        (Action::Flow(a), Action::Flow(b)) => {
+            std::mem::discriminant(a) == std::mem::discriminant(b)
         }
-        // For other action types, compare outer variants
-        _ => std::mem::discriminant(a) == std::mem::discriminant(b),
+        (Action::Metadata(a), Action::Metadata(b)) => {
+            // `tag` accumulates; the rest are single-valued.
+            !matches!(a, MetadataAction::Tag(_))
+                && std::mem::discriminant(a) == std::mem::discriminant(b)
+        }
+        (Action::Logging(a), Action::Logging(b)) => {
+            let group = |l: &LoggingAction| match l {
+                LoggingAction::Log | LoggingAction::NoLog => Some(0),
+                LoggingAction::AuditLog | LoggingAction::NoAuditLog => Some(1),
+                LoggingAction::SanitiseMatched | LoggingAction::SanitizeMatched => Some(2),
+                _ => None,
+            };
+            matches!((group(a), group(b)), (Some(x), Some(y)) if x == y)
+        }
+        (Action::Data(DataAction::Capture), Action::Data(DataAction::Capture)) => true,
+        _ => false,
     }
 }
 

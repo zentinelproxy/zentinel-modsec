@@ -501,7 +501,8 @@ impl Transaction {
 
                 // `capture` and `setvar` run once for each variable the
                 // operator matched, in order, as libmodsecurity does
-                // (`rule_with_operator.cc:279-303`): CRS 920450 sets
+                // (`rule_with_operator.cc:255-317`; the TX:N stores are in
+                // `operators/rx.cc:104-113`): CRS 920450 sets
                 // `tx.header_name_920450_<name>` for every request header so
                 // that its chained `@within` can look the restricted ones up.
                 // `setvar` runs as soon as its own link matches, whether or

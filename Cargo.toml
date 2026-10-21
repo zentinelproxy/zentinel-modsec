@@ -69,6 +69,11 @@ thiserror = "2.0"
 # CLI
 clap = { version = "4.5", features = ["derive", "env"] }
 
+# Insertion-ordered collections: rule evaluation order over a collection is
+# part of the result (MATCHED_VAR, captures), so it must not depend on a hash
+# seed (#53).
+indexmap = "2"
+
 # Lazy initialization
 once_cell = "1.19"
 

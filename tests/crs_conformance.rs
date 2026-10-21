@@ -29,10 +29,15 @@
 //!
 //! ```text
 //! mkdir -p test-rules
-//! git clone --depth 1 https://github.com/coreruleset/coreruleset.git test-rules/crs
+//! git clone https://github.com/coreruleset/coreruleset.git test-rules/crs
+//! git -C test-rules/crs checkout 30cb436   # the commit CI pins
 //! cp test-rules/crs/crs-setup.conf.example test-rules/crs/crs-setup.conf
 //! cargo test --test crs_conformance -- --nocapture
 //! ```
+//!
+//! The gate expects an exact pass count, so it only holds against the CRS
+//! commit CI pins (`.github/workflows/ci.yml`); another checkout will report a
+//! different number.
 //!
 //! `CRS_DIR` overrides the location. `SKIP_CRS_CONFORMANCE=1` skips these tests
 //! when the corpus is not present — CI's unit-test job sets it, because the
@@ -49,13 +54,17 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use zentinel_modsec::ModSecurity;
 
-/// Cases the corpus must still pass. Raise it when a fix lands; never lower it
-/// without saying which rules regressed and why.
+/// Cases the corpus passes — exactly. A change in either direction fails the
+/// gate, so every gain and every loss is acknowledged in the commit that causes
+/// it: raise it when a fix lands; never lower it without saying which rules
+/// regressed and why.
 ///
-/// Measured on CRS `main` (4.31.0-dev, 30cb436). The corpus is a moving
-/// target — it is pinned by whatever the checkout holds — so a drop after
-/// pulling a newer CRS is worth reading as new tests before reading it as a
-/// regression.
+/// That only works because evaluation is deterministic (#53: collections used
+/// to iterate in hash order, and the count varied between runs of one commit)
+/// and because CI pins the CRS checkout. Measured on CRS `main` (4.31.0-dev,
+/// 30cb436, the commit CI fetches). The corpus upstream keeps moving, so a
+/// change after bumping that commit is worth reading as new tests before
+/// reading it as a regression.
 const MIN_PASSING: u32 = 4806;
 
 /// Corpus stages that cannot be driven from here: an `encoded_request` payload,
@@ -330,12 +339,12 @@ fn crs_regression_corpus() {
          The lists above name the rules. If this is a deliberate trade, say which \
          rules regressed and why, then lower MIN_PASSING in the same commit."
     );
-    if pass > MIN_PASSING {
-        println!(
-            "\nMIN_PASSING is {MIN_PASSING} but {pass} pass — raise it to {pass} \
-             so the gain cannot be lost silently."
-        );
-    }
+    assert!(
+        pass <= MIN_PASSING,
+        "CRS conformance improved: {pass} passing, MIN_PASSING is {MIN_PASSING}. \
+         Raise MIN_PASSING to {pass} in this commit, so the gain cannot be lost \
+         silently."
+    );
 }
 
 // --- the half the corpus cannot see ----------------------------------------

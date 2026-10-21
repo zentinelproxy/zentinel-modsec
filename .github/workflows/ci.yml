@@ -73,10 +73,17 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-conformance-${{ hashFiles('Cargo.toml') }}
           restore-keys: ${{ runner.os }}-cargo-conformance-
+      # Pinned: the gate compares the pass count for an exact match, so the
+      # corpus must not move under it. Bump the commit and MIN_PASSING in
+      # tests/crs_conformance.rs together.
       - name: Fetch OWASP CRS
+        env:
+          CRS_COMMIT: 30cb436b261a9f5ec32a5a0677e17f3cfa1a8739
         run: |
-          mkdir -p test-rules
-          git clone --depth 1 https://github.com/coreruleset/coreruleset.git test-rules/crs
+          mkdir -p test-rules/crs
+          git -C test-rules/crs init -q
+          git -C test-rules/crs fetch -q --depth 1 https://github.com/coreruleset/coreruleset.git "$CRS_COMMIT"
+          git -C test-rules/crs checkout -q FETCH_HEAD
           cp test-rules/crs/crs-setup.conf.example test-rules/crs/crs-setup.conf
           git -C test-rules/crs log -1 --format='CRS %h %ci'
       # Release: ~14s against the corpus, versus minutes unoptimised. This job

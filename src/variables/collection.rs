@@ -1,7 +1,7 @@
 //! Collection trait and implementations.
 
+use indexmap::IndexMap;
 use regex::Regex;
-use std::collections::HashMap;
 
 /// A collection of key-value pairs.
 pub trait Collection: Send + Sync {
@@ -36,10 +36,21 @@ pub trait MutableCollection: Collection {
     fn decrement(&mut self, key: &str, amount: i64);
 }
 
-/// Simple hash map based collection.
+/// A keyed collection that iterates in insertion order.
+///
+/// Order is part of the result, not an implementation detail: a rule over a
+/// collection reports the first variable that matched, which becomes
+/// `MATCHED_VAR`, the captures and the audit log's matched data. A
+/// `std::collections::HashMap` iterates in an order seeded per map, so the
+/// same rules and the same request gave different answers from run to run
+/// (zentinelproxy/zentinel-modsec#53). Insertion order is the order the
+/// request carried its headers and arguments in, and the order `setvar`
+/// created TX variables in.
+///
+/// The name is kept for API compatibility.
 #[derive(Debug, Clone, Default)]
 pub struct HashMapCollection {
-    data: HashMap<String, Vec<String>>,
+    data: IndexMap<String, Vec<String>>,
 }
 
 impl HashMapCollection {
@@ -96,7 +107,9 @@ impl MutableCollection for HashMapCollection {
     }
 
     fn delete(&mut self, key: &str) {
-        self.data.remove(key);
+        // `shift_remove`, not `swap_remove`: the latter moves the last key
+        // into the gap and so reorders what is left.
+        self.data.shift_remove(key);
     }
 
     fn increment(&mut self, key: &str, amount: i64) {

@@ -436,6 +436,17 @@ fn stock_crs_blocks_attacks_and_passes_ordinary_traffic() {
             "",
             b"",
         ),
+        // Detected only by rules whose anomaly score sits on the last link of
+        // a chain (920170, 920420): invisible while that `setvar` did not run.
+        ("GET with a body", true, "GET", "/", "text/plain", b"hi"),
+        (
+            "unknown Content-Type",
+            true,
+            "POST",
+            "/",
+            "my-new-content-type",
+            b"hi=test",
+        ),
     ];
 
     let mut wrong = Vec::new();

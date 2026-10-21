@@ -74,6 +74,8 @@ pub struct Transaction {
     matched_data: Vec<MatchedData>,
     /// What each `setvar` that ran did, in order. See [`SetVarEffect`].
     setvar_effects: Vec<SetVarEffect>,
+    /// Whether `setvar_effects` is filled. Off by default.
+    record_setvar_effects: bool,
 }
 
 /// The variable a rule matched on.
@@ -183,6 +185,7 @@ impl Transaction {
             controls: TransactionControls::default(),
             matched_data: Vec::new(),
             setvar_effects: Vec::new(),
+            record_setvar_effects: false,
         }
     }
 
@@ -215,7 +218,22 @@ impl Transaction {
         &self.matched_data
     }
 
+    /// Record what every `setvar` does, for [`setvar_effects`](Self::setvar_effects).
+    ///
+    /// Off by default: a rule that matches many values runs its `setvar` for
+    /// each, so a request with hundreds of arguments records thousands of
+    /// entries (about 250 KB with stock CRS at paranoia 1 for 200 arguments
+    /// that each trip several rules). Call this before processing the request.
+    pub fn set_record_setvar_effects(&mut self, enabled: bool) {
+        self.record_setvar_effects = enabled;
+    }
+
     /// Every `setvar` that ran in this transaction, in order of execution.
+    ///
+    /// Empty unless [`set_record_setvar_effects`](Self::set_record_setvar_effects)
+    /// was enabled first. A rule over several values (`ARGS`, request headers)
+    /// runs its `setvar` once per matching value, as libmodsecurity does, and
+    /// each run is an entry.
     ///
     /// A `setvar` on a chain link runs when that link matches, so a chain that
     /// fails later still leaves the effects of its earlier links here; they are
@@ -977,7 +995,7 @@ impl Transaction {
         };
         crate::actions::apply_setvar(&mut self.tx, &resolved);
 
-        if let Some(rule_id) = rule_id {
+        if let Some(rule_id) = rule_id.filter(|_| self.record_setvar_effects) {
             let effect_op = match &resolved.operation {
                 SetVarOperation::Set(v) => Some(SetVarOp::Set(v.clone())),
                 SetVarOperation::Increment(n) => Some(SetVarOp::Increment(*n)),

@@ -138,3 +138,54 @@ fn macros_resolve_request_headers_and_the_matched_variable() {
     // The header is compared with itself, so the negated operator is false.
     assert_eq!(tx_var(&tx, "mismatch"), "-");
 }
+
+/// A request with the given extra headers (Host is always present).
+fn run_with_headers(rules: &str, headers: &[&str]) -> zentinel_modsec::engine::Transaction {
+    let msc = ModSecurity::from_string(rules).expect("rules should load");
+    let mut tx = msc.new_transaction();
+    tx.process_uri("/", "GET", "HTTP/1.1").unwrap();
+    tx.add_request_header("Host", "example.com").unwrap();
+    for h in headers {
+        tx.add_request_header(h, "test").unwrap();
+    }
+    tx.process_request_headers().unwrap();
+    tx
+}
+
+#[test]
+fn setvar_and_capture_run_once_for_every_matched_variable() {
+    // libmodsecurity runs the operator against every value and the rule's
+    // setvar for each one that matches: three header names, three increments,
+    // and TX:0 ends as the last match.
+    let rules = "SecRuleEngine On\n\
+        SecRule REQUEST_HEADERS_NAMES \"@rx ^.*$\" \"id:80,phase:1,pass,nolog,capture,t:lowercase,setvar:'tx.hits=+1',setvar:'tx.last=%{tx.0}'\"";
+    let tx = run_with_headers(rules, &["X-A", "X-B"]);
+    assert_eq!(tx_var(&tx, "hits"), "3");
+    assert_eq!(tx_var(&tx, "last"), "x-b");
+}
+
+#[test]
+fn a_setvar_name_with_a_macro_makes_one_variable_per_match() {
+    // CRS 920450: the starter records every request header under its own name
+    // and the chained `@within` looks for a restricted one among them, whatever
+    // its position.
+    let rules = "SecRuleEngine On\n\
+        SecAction \"id:1,phase:1,pass,nolog,setvar:'tx.restricted=/lock-token/ /if/'\"\n\
+        SecRule REQUEST_HEADERS_NAMES \"@rx ^.*$\" \"id:80,phase:1,pass,nolog,capture,t:lowercase,setvar:'tx.header_name_80_%{tx.0}=/%{tx.0}/',chain\"\n\
+        SecRule TX:/^header_name_80_/ \"@within %{tx.restricted}\" \"setvar:'tx.score=+5'\"";
+    for headers in [
+        &["If", "Accept"][..],
+        &["Accept", "If"],
+        &["Accept", "Lock-Token", "X-Other"],
+    ] {
+        let tx = run_with_headers(rules, headers);
+        assert_eq!(tx_var(&tx, "score"), "5", "{headers:?}");
+        assert!(
+            tx.matched_rules().contains(&"80".to_string()),
+            "{headers:?}"
+        );
+    }
+    let tx = run_with_headers(rules, &["Accept", "Range"]);
+    assert_eq!(tx_var(&tx, "score"), "-");
+    assert_eq!(tx_var(&tx, "header_name_80_range"), "/range/");
+}

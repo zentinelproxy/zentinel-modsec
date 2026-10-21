@@ -13,7 +13,7 @@ use crate::actions::{
 };
 use crate::error::Result;
 use crate::operators::{compile_operator, Operator};
-use crate::parser::OperatorSpec;
+use crate::parser::{Action, DataAction, OperatorSpec};
 use crate::variables::{Collection, RequestData, ResponseData, TxCollection, VariableResolver};
 
 /// Whether a lowercased Content-Type denotes a JSON body.
@@ -81,19 +81,24 @@ struct MatchedVariable {
     portion: Option<String>,
 }
 
-/// Result of evaluating one rule.
-struct RuleOutcome {
-    matched: bool,
+/// One variable value a rule's operator matched.
+struct RuleMatch {
     captures: Vec<String>,
     matched_variable: Option<MatchedVariable>,
+}
+
+/// Result of evaluating one rule: every match, in the order the variables were
+/// resolved. libmodsecurity runs the operator against every value and handles
+/// each match on its own (`capture`, `setvar`), so a rule over `REQUEST_HEADERS`
+/// acts once per matching header.
+struct RuleOutcome {
+    matches: Vec<RuleMatch>,
 }
 
 impl RuleOutcome {
     fn no_match() -> Self {
         Self {
-            matched: false,
-            captures: Vec::new(),
-            matched_variable: None,
+            matches: Vec::new(),
         }
     }
 }
@@ -405,6 +410,7 @@ impl Transaction {
         // A chain is one logical rule: the starter's actions fire only when
         // every link matches, so they are held here until the chain completes.
         let mut pending_chain_actions: Option<ActionResult> = None;
+        let mut pending_chain_id: Option<String> = None;
         let mut skip_count: u32 = 0;
         let mut skip_after: Option<String> = None;
 
@@ -448,6 +454,7 @@ impl Transaction {
                 if rule.is_chain {
                     chain_state.reset();
                     pending_chain_actions = None;
+                    pending_chain_id = None;
                     idx += 1;
                     while idx < rules.len() && rules[idx - 1].is_chain {
                         idx += 1;
@@ -470,42 +477,78 @@ impl Transaction {
 
             // Evaluate rule
             let outcome = self.evaluate_rule(rule)?;
-            let matched = outcome.matched;
-            let captures = outcome.captures;
+            let matched = !outcome.matches.is_empty();
+            // What the rule left behind for the chain: the last match's captures.
+            let captures = outcome
+                .matches
+                .last()
+                .map(|m| m.captures.clone())
+                .unwrap_or_default();
 
             if matched {
                 // MATCHED_VARS is scoped to the current rule in ModSecurity,
                 // so this replaces rather than appends -- otherwise a later
                 // rule would read the previous rule's matches.
                 self.matched_vars.clear();
-                if let Some(ref var) = outcome.matched_variable {
-                    self.matched_vars
-                        .push((var.name.clone(), var.value.clone()));
-                    self.matched_data.push(MatchedData {
-                        rule_id: rule.id.clone(),
-                        variable: var.name.clone(),
-                        value: var.value.clone(),
-                        matched_portion: var.portion.clone(),
-                    });
-                }
-            }
 
-            if matched {
                 // Execute actions
-                let action_result = execute_actions(&rule.actions, None, &captures);
+                let mut action_result = execute_actions(&rule.actions, None, &captures);
+                let setvar_ops = std::mem::take(&mut action_result.setvar_ops);
+                let capture = rule
+                    .actions
+                    .iter()
+                    .any(|a| matches!(a, Action::Data(DataAction::Capture)));
 
-                // Track matched rule
-                if let Some(ref id) = rule.id {
-                    self.matched_rules.push(id.clone());
+                // `capture` and `setvar` run once for each variable the
+                // operator matched, in order, as libmodsecurity does
+                // (`rule_with_operator.cc:255-317`; the TX:N stores are in
+                // `operators/rx.cc:104-113`): CRS 920450 sets
+                // `tx.header_name_920450_<name>` for every request header so
+                // that its chained `@within` can look the restricted ones up.
+                // `setvar` runs as soon as its own link matches, whether or
+                // not the rest of the chain does (`executeActionsIndependent
+                // OfChainedRuleResult`), and CRS relies on it (a starter's
+                // `setvar:tx.x=%{MATCHED_VAR}` is read by the links after it).
+                // Every other action waits for the whole chain.
+                for (n, m) in outcome.matches.iter().enumerate() {
+                    if let Some(var) = &m.matched_variable {
+                        self.matched_vars
+                            .push((var.name.clone(), var.value.clone()));
+                        // The audit record keeps the first match only: one
+                        // entry per rule, however many values it hit.
+                        if n == 0 {
+                            self.matched_data.push(MatchedData {
+                                rule_id: rule.id.clone(),
+                                variable: var.name.clone(),
+                                value: var.value.clone(),
+                                matched_portion: var.portion.clone(),
+                            });
+                        }
+                    }
+                    // TX:0 (the whole match) and TX:1..TX:9, before any setvar
+                    // reads `%{tx.N}`.
+                    if capture {
+                        let whole = m.matched_variable.as_ref().and_then(|v| v.portion.clone());
+                        self.store_captures(whole, &m.captures);
+                    }
+                    for op in &setvar_ops {
+                        self.apply_setvar(op);
+                    }
                 }
 
                 if rule.is_chain {
                     // A link that expects more links after it. Hold the
-                    // starter's actions: nothing may fire until the whole
-                    // chain has matched.
+                    // starter's remaining actions: nothing else may fire until
+                    // the whole chain has matched. The starter's id is held
+                    // back too, so a chain that later fails does not count as
+                    // a match.
                     if !chain_state.in_chain {
                         chain_state.start_chain(idx);
+                        pending_chain_id = rule.id.clone();
                         pending_chain_actions = Some(action_result);
+                    } else if let Some(held) = pending_chain_actions.as_mut() {
+                        // A middle link: its ctl runs with the chain.
+                        held.control_ops.extend(action_result.control_ops);
                     }
                     chain_state.continue_chain(true, &captures);
                     idx += 1;
@@ -513,19 +556,28 @@ impl Transaction {
                 }
 
                 // Either a standalone rule, or the final link of a chain that
-                // has now matched in full. A completed chain executes the
-                // starter's actions, not the last link's.
+                // has now matched in full. A completed chain keeps the
+                // starter's disruptive action, flow and metadata, and runs the
+                // ctl of every link.
                 let action_result = if chain_state.in_chain {
                     chain_state.reset();
-                    pending_chain_actions.take().unwrap_or(action_result)
+                    if let Some(id) = pending_chain_id.take() {
+                        self.matched_rules.push(id);
+                    }
+                    match pending_chain_actions.take() {
+                        Some(mut held) => {
+                            held.control_ops.extend(action_result.control_ops);
+                            held
+                        }
+                        None => action_result,
+                    }
                 } else {
+                    // Track matched rule
+                    if let Some(ref id) = rule.id {
+                        self.matched_rules.push(id.clone());
+                    }
                     action_result
                 };
-
-                // Apply setvar operations
-                for op in &action_result.setvar_ops {
-                    self.apply_setvar(op);
-                }
 
                 // Apply ctl: overrides before the disruptive action below, so
                 // that ctl:ruleEngine=DetectionOnly on the same rule governs
@@ -609,6 +661,7 @@ impl Transaction {
                 if chain_state.in_chain || rule.is_chain {
                     chain_state.reset();
                     pending_chain_actions = None;
+                    pending_chain_id = None;
                     while idx < rules.len() && rules[idx].is_chain {
                         idx += 1;
                     }
@@ -701,10 +754,14 @@ impl Transaction {
                 };
                 // A SecAction has no variable, so there is nothing to report
                 // as the match target.
+                if !matched {
+                    return Ok(RuleOutcome::no_match());
+                }
                 return Ok(RuleOutcome {
-                    matched,
-                    captures: result.captures,
-                    matched_variable: None,
+                    matches: vec![RuleMatch {
+                        captures: result.captures,
+                        matched_variable: None,
+                    }],
                 });
             }
             // Variables were specified but resolved to nothing (e.g. absent
@@ -716,11 +773,7 @@ impl Transaction {
             // 920100 (`REQUEST_LINE "!@rx ..."`) into a rule that denied all
             // traffic. Absence is tested with `&VAR "@eq 0"`, which resolves to
             // a count and so never reaches this branch.
-            return Ok(RuleOutcome {
-                matched: false,
-                captures: Vec::new(),
-                matched_variable: None,
-            });
+            return Ok(RuleOutcome::no_match());
         }
 
         // If the operator argument references runtime macros (e.g.
@@ -740,7 +793,8 @@ impl Transaction {
             rule.operator.as_ref()
         };
 
-        // Apply transformations and match
+        // Apply transformations and match every value
+        let mut matches = Vec::new();
         for (name, value) in all_values {
             let transformed = rule.transformations.apply(&value);
             let result = operator.execute(&transformed);
@@ -761,22 +815,21 @@ impl Transaction {
                     value: transformed.into_owned(),
                     portion: result.matched_value,
                 };
-                return Ok(RuleOutcome {
-                    matched: true,
+                matches.push(RuleMatch {
                     captures: result.captures,
                     matched_variable: Some(matched),
                 });
             }
         }
 
-        Ok(RuleOutcome::no_match())
+        Ok(RuleOutcome { matches })
     }
 
     /// Expand `%{...}` macros in an operator argument against current TX state.
     ///
-    /// Only the `TX`/`tx` collection is resolved (the source of operator-argument
-    /// macros in CRS, e.g. thresholds and `tx.allowed_methods`); an unresolved
-    /// macro expands to an empty string, matching ModSecurity behaviour.
+    /// Resolved: the `TX` collection (thresholds, `tx.allowed_methods`),
+    /// `REQUEST_HEADERS.<name>` and `MATCHED_VAR`/`MATCHED_VAR_NAME`. Anything
+    /// else expands to an empty string.
     fn expand_operator_macros(&self, arg: &str) -> String {
         // Compiled once: this runs on every evaluation of an operator whose
         // argument contains `%{`.
@@ -786,41 +839,92 @@ impl Transaction {
         MACRO
             .replace_all(arg, |caps: &regex::Captures| {
                 let inner = &caps[1];
+                // Bare names that are not collections (`%{MATCHED_VAR_NAME}`).
+                match inner.to_ascii_lowercase().as_str() {
+                    "matched_var" => {
+                        return self
+                            .matched_vars
+                            .last()
+                            .map(|(_, v)| v.clone())
+                            .unwrap_or_default()
+                    }
+                    "matched_var_name" => {
+                        return self
+                            .matched_vars
+                            .last()
+                            .map(|(n, _)| n.clone())
+                            .unwrap_or_default()
+                    }
+                    _ => {}
+                }
                 let (collection, name) = match inner.split_once('.') {
                     Some((c, n)) => (c.to_ascii_lowercase(), n),
                     None => ("tx".to_string(), inner),
                 };
-                if collection == "tx" {
-                    self.tx
+                match collection.as_str() {
+                    "tx" => self
+                        .tx
                         .get(name)
                         .and_then(|v| v.first().map(|s| s.to_string()))
-                        .unwrap_or_default()
-                } else {
-                    String::new()
+                        .unwrap_or_default(),
+                    // CRS 943110: `!@endsWith %{request_headers.host}`.
+                    "request_headers" => self
+                        .request
+                        .headers
+                        .get(&name.to_ascii_lowercase())
+                        .and_then(|v| v.first().map(|s| s.to_string()))
+                        .unwrap_or_default(),
+                    _ => String::new(),
                 }
             })
             .into_owned()
     }
 
+    /// Publish the captures of a `capture` rule as `TX:0`..`TX:9`.
+    ///
+    /// `whole` is the text the operator matched (TX:0); `groups` are the regex
+    /// groups, in order (TX:1...). Slots the match did not fill are removed so
+    /// a stale value from an earlier rule cannot be read.
+    fn store_captures(&mut self, whole: Option<String>, groups: &[String]) {
+        use crate::variables::MutableCollection;
+        for i in 0..10 {
+            self.tx.delete(&i.to_string());
+        }
+        if let Some(w) = whole {
+            self.tx.set("0".to_string(), w);
+        }
+        for (i, g) in groups.iter().take(9).enumerate() {
+            self.tx.set((i + 1).to_string(), g.clone());
+        }
+    }
+
     /// Apply a setvar operation.
     fn apply_setvar(&mut self, op: &SetVarOp) {
+        // The variable name may carry a macro too (CRS 920450:
+        // `tx.header_name_920450_%{tx.0}`, one variable per request header);
+        // without expanding it every header would overwrite one variable.
+        let name = if op.name.contains("%{") {
+            self.expand_operator_macros(&op.name)
+        } else {
+            op.name.clone()
+        };
         // A macro-bearing value (e.g. `+%{tx.critical_anomaly_score}`) is
         // resolved here, where TX state is available, then re-interpreted as a
         // concrete set/increment/decrement.
-        if let SetVarOperation::Macro(raw) = &op.operation {
-            let expanded = self.expand_operator_macros(raw);
-            let resolved = SetVarOp {
-                collection: op.collection.clone(),
-                name: op.name.clone(),
-                operation: interpret_setvar_rhs(&expanded),
-            };
-            crate::actions::apply_setvar(&mut self.tx, &resolved);
+        let operation = if let SetVarOperation::Macro(raw) = &op.operation {
+            interpret_setvar_rhs(&self.expand_operator_macros(raw))
         } else {
-            crate::actions::apply_setvar(&mut self.tx, op);
-        }
+            op.operation.clone()
+        };
+        let resolved = SetVarOp {
+            collection: op.collection.clone(),
+            name,
+            operation,
+        };
+        crate::actions::apply_setvar(&mut self.tx, &resolved);
 
         // Sync anomaly score from TX if relevant
-        if op.name == "anomaly_score" {
+        if resolved.name == "anomaly_score" {
             self.anomaly_score.sync_from_tx(&self.tx);
         }
     }

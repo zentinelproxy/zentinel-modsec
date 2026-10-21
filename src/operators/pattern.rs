@@ -89,7 +89,9 @@ impl Operator for RxOperator {
             let capture_groups: Vec<String> = captures
                 .iter()
                 .skip(1) // Skip the full match
-                .filter_map(|c| c.map(|m| m.as_str().to_string()))
+                // A group that did not take part stays in its slot (empty), so
+                // TX:2 is always the second group.
+                .map(|c| c.map(|m| m.as_str().to_string()).unwrap_or_default())
                 .collect();
 
             OperatorResult {

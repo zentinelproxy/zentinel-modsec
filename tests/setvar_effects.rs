@@ -12,6 +12,7 @@ use zentinel_modsec::ModSecurity;
 fn run(rules: &str, uri: &str) -> Transaction {
     let msc = ModSecurity::from_string(rules).expect("rules should load");
     let mut tx = msc.new_transaction();
+    tx.set_record_setvar_effects(true);
     tx.process_uri(uri, "GET", "HTTP/1.1").unwrap();
     tx.add_request_header("Host", "example.com").unwrap();
     tx.add_request_header("X-Tag", "blue").unwrap();
@@ -46,6 +47,20 @@ fn set_increment_decrement_and_delete_are_recorded_in_order() {
             effect("2", "name", SetVarOp::Delete),
         ]
     );
+}
+
+#[test]
+fn nothing_is_recorded_unless_asked() {
+    let rules = "SecRuleEngine On\n\
+        SecRule REQUEST_URI \"@contains go\" \"id:1,phase:2,pass,nolog,setvar:'tx.score=+3'\"";
+    let msc = ModSecurity::from_string(rules).unwrap();
+    let mut tx = msc.new_transaction();
+    tx.process_uri("/go", "GET", "HTTP/1.1").unwrap();
+    tx.add_request_header("Host", "example.com").unwrap();
+    tx.process_request_headers().unwrap();
+    tx.process_request_body().unwrap();
+    assert!(tx.setvar_effects().is_empty());
+    assert_eq!(tx.matched_rules(), ["1"]);
 }
 
 #[test]
@@ -87,6 +102,32 @@ fn a_failed_chain_keeps_the_effects_of_the_links_that_ran() {
         [effect("10", "seen", SetVarOp::Set("1".into()))]
     );
     assert!(tx.matched_rules().is_empty());
+}
+
+#[test]
+fn a_rule_matching_several_values_records_an_effect_for_each() {
+    // The operator runs against every header name; setvar runs for each match
+    // (as libmodsecurity does), and each run is an effect. A macro in the
+    // variable name is recorded expanded.
+    let rules = "SecRuleEngine On\n\
+        SecRule REQUEST_HEADERS_NAMES \"@rx ^x-.*$\" \"id:30,phase:1,pass,nolog,capture,t:lowercase,setvar:'tx.hits=+1',setvar:'tx.seen_%{tx.0}=1'\"";
+    let msc = ModSecurity::from_string(rules).unwrap();
+    let mut tx = msc.new_transaction();
+    tx.set_record_setvar_effects(true);
+    tx.process_uri("/", "GET", "HTTP/1.1").unwrap();
+    tx.add_request_header("Host", "example.com").unwrap();
+    tx.add_request_header("X-A", "1").unwrap();
+    tx.add_request_header("X-B", "2").unwrap();
+    tx.process_request_headers().unwrap();
+    assert_eq!(
+        tx.setvar_effects(),
+        [
+            effect("30", "hits", SetVarOp::Increment(1)),
+            effect("30", "seen_x-a", SetVarOp::Set("1".into())),
+            effect("30", "hits", SetVarOp::Increment(1)),
+            effect("30", "seen_x-b", SetVarOp::Set("1".into())),
+        ]
+    );
 }
 
 #[test]
@@ -136,6 +177,7 @@ fn stock_crs_xss_scores_are_increments_of_the_anomaly_score_variable() {
     let msc = ModSecurity::from_string(&cfg).expect("CRS should load");
 
     let mut tx = msc.new_transaction();
+    tx.set_record_setvar_effects(true);
     tx.process_uri("/s?q=%3Cscript%3Ealert(1)%3C/script%3E", "GET", "HTTP/1.1")
         .unwrap();
     tx.add_request_header("Host", "example.com").unwrap();

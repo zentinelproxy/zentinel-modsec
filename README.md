@@ -1,446 +1,137 @@
-# zentinel-modsec
+<p align="center">
+  <a href="https://zentinelproxy.io">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/zentinelproxy/design/main/marks/lockup/zentinel-lockup-dark.svg">
+      <img alt="Zentinel" src="https://raw.githubusercontent.com/zentinelproxy/design/main/marks/lockup/zentinel-lockup-light.svg" height="52">
+    </picture>
+  </a>
+</p>
 
-[![Crates.io](https://img.shields.io/crates/v/zentinel-modsec.svg)](https://crates.io/crates/zentinel-modsec)
-[![Documentation](https://docs.rs/zentinel-modsec/badge.svg)](https://docs.rs/zentinel-modsec)
-[![License](https://img.shields.io/crates/l/zentinel-modsec.svg)](LICENSE)
+<h3 align="center">ModSecurity engine in Rust</h3>
 
-**Pure Rust ModSecurity rule engine, measured against the OWASP CRS regression suite.**
+<p align="center">A pure Rust ModSecurity (SecLang) rule engine that runs the OWASP Core Rule Set, for Rust applications that want a WAF without libmodsecurity.</p>
 
-A ModSecurity rule engine written in Rust with zero C/C++ dependencies. Loads and
-executes OWASP Core Rule Set (CRS) rules for web application firewall (WAF)
-functionality in any Rust application.
+<p align="center">
+  <a href="https://github.com/zentinelproxy/zentinel-modsec/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/zentinelproxy/zentinel-modsec/actions/workflows/ci.yml/badge.svg"></a>
+  <img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-9b4d8a?style=flat&labelColor=1f161e">
+  <img alt="Rust" src="https://img.shields.io/badge/rust-1.94.1%2B-f68d31?style=flat&labelColor=1f161e&logo=rust&logoColor=white">
+</p>
 
-CRS compatibility is reported as a number rather than asserted: see
-[CRS conformance](#crs-conformance) below.
+<p align="center">
+  <a href="https://docs.rs/zentinel-modsec">API reference</a> &middot;
+  <a href="https://docs.zentinelproxy.io">Docs</a> &middot;
+  <a href="https://github.com/zentinelproxy">All repositories</a>
+</p>
 
-## Performance: 4-11x Faster than libmodsecurity
+`zentinel-modsec` parses ModSecurity `.conf` rule files and evaluates them
+against requests and responses, with no C or C++ dependency and no FFI
+(`#![deny(unsafe_code)]`). SQL injection and XSS detection (`@detectSQLi`,
+`@detectXSS`) are a pure Rust port of libinjection. CRS compatibility is
+reported as a number, not asserted: CI runs the CRS regression corpus on every
+push and fails if the pass count changes (see [CRS conformance](#crs-conformance)).
 
-| Benchmark | zentinel-modsec | libmodsecurity (C++) | Speedup |
-|-----------|-----------------|----------------------|---------|
-| Clean request | 1.34 µs | 5.65 µs | **4.2x faster** |
-| SQLi detection | 1.40 µs | 16.03 µs | **11.5x faster** |
-| Body processing | 1.45 µs | 12.91 µs | **8.9x faster** |
-| Rule parsing (complex) | 2.73 µs | 10.58 µs | **3.9x faster** |
-| **Throughput (clean)** | **676K req/s** | 168K req/s | **4.0x higher** |
-| **Throughput (attack)** | **701K req/s** | 62K req/s | **11.3x higher** |
+It is the engine behind Zentinel's
+[ZentinelSec agent](https://registry.zentinelproxy.io/zentinelsec/). The
+[ModSecurity agent](https://github.com/zentinelproxy/zentinel-agent-modsec) is
+a different thing: it wraps the C++ libmodsecurity.
 
-<sub>Both engines run the same ruleset through request phases 1 and 2 on the same
-machine (Apple M-series, single thread, criterion). Ratios matter more than the
-absolute numbers, which are hardware-dependent. Reproduce with
-`cargo bench --features libmodsec-compare`.</sub>
-
-> **Earlier numbers were wrong.** This table previously claimed 10-30x and
-> 6.2M req/s. Those figures came from a benchmark that never executed the
-> detection rules on the zentinel-modsec side — the ruleset's detection rule is
-> `phase:2`, but the measured section stopped after phase 1, and the attack
-> payloads did not match the rule's pattern in the first place. That was true of
-> *both* engines, so the comparison measured transaction setup overhead on an
-> empty ruleset rather than rule evaluation. Body-processing and rule-parsing
-> figures always ran the rule and were unaffected.
-> Reported in [#15](https://github.com/zentinelproxy/zentinel-modsec/issues/15)
-> and corrected in the benchmark; these numbers are the re-measurement.
->
-> Re-measured again after #17 and #18 (SecRuleUpdateTargetById, MULTIPART_PART_HEADERS population and the chain-semantics fix), which add real per-request work: throughput moved from 797K to 676K req/s and the headline from 4-13x to 4-11x.
-
-## Features
-
-- **Loads the stock OWASP CRS** - all 703 rules of CRS 4.30 parse and execute; conformance is [measured on every push](#crs-conformance)
-- **Pure Rust** - No libmodsecurity, no C/C++ dependencies, no FFI
-- **SecLang Support** - Load standard ModSecurity `.conf` rule files
-- **Built-in Detection** - Native `@detectSQLi` and `@detectXSS` operators (pure Rust libinjection)
-- **All Operators** - `@rx`, `@pm`, `@pmFromFile`, `@contains`, `@streq`, `@ipMatch`, and 30+ more
-- **All Transformations** - `t:lowercase`, `t:urlDecode`, `t:base64Decode`, `t:htmlEntityDecode`, and 30+ more
-- **Thread-Safe** - `Send + Sync`, safe for concurrent request processing
-- **Async-Ready** - Works with tokio, async-std, or any async runtime
-- **Zero Unsafe** - `#![deny(unsafe_code)]`
-
-## Quick Start
-
-Add to your `Cargo.toml`:
+## Quick start
 
 ```toml
 [dependencies]
-zentinel-modsec = "0.1"
+zentinel-modsec = "0.5"
 ```
-
-### Basic Usage
 
 ```rust
 use zentinel_modsec::ModSecurity;
 
 fn main() -> zentinel_modsec::Result<()> {
-    // Compile rules once; reuse the engine for all requests.
+    // Compile rules once; reuse the engine for every request.
     let modsec = ModSecurity::from_string(r#"
         SecRuleEngine On
         SecRule REQUEST_URI "@contains /admin" \
             "id:1,phase:1,deny,status:403,msg:'Admin access blocked'"
     "#)?;
 
-    // Process a request
     let mut tx = modsec.new_transaction();
     tx.process_uri("/admin/dashboard", "GET", "HTTP/1.1")?;
     tx.add_request_header("Host", "example.com")?;
-    tx.add_request_header("User-Agent", "Mozilla/5.0")?;
-    tx.process_request_headers()?;
+    tx.process_request_headers()?; // runs phase 1
 
-    // Check for intervention (block/redirect/etc)
-    if let Some(intervention) = tx.intervention() {
-        println!("Blocked: status={}, rules={:?}",
-            intervention.status,
-            intervention.rule_ids);
+    if let Some(i) = tx.intervention() {
+        println!("blocked: status={}, rules={:?}", i.status, i.rule_ids);
     }
-
     Ok(())
 }
 ```
 
-### Loading OWASP CRS Rules
+## Install
 
-```rust
-use zentinel_modsec::ModSecurity;
+As a library, from crates.io: `cargo add zentinel-modsec`.
 
-fn main() -> zentinel_modsec::Result<()> {
-    // Point at an entry file that `Include`s crs-setup.conf and the rule files
-    // (CRS ships such a layout), or a single combined ruleset file.
-    let modsec = ModSecurity::from_file("/etc/modsecurity/main.conf")?;
-
-    println!("Loaded {} rules", modsec.rule_count());
-
-    Ok(())
-}
-```
-
-### SQL Injection Detection
-
-```rust
-use zentinel_modsec::ModSecurity;
-
-fn main() -> zentinel_modsec::Result<()> {
-    let modsec = ModSecurity::from_string(r#"
-        SecRuleEngine On
-        SecRule ARGS "@detectSQLi" \
-            "id:942100,phase:2,deny,status:403,msg:'SQL Injection detected'"
-    "#)?;
-
-    let mut tx = modsec.new_transaction();
-
-    // Simulate a request with SQLi payload
-    tx.process_uri("/search?q=' OR 1=1--", "GET", "HTTP/1.1")?;
-    tx.process_request_headers()?;
-
-    assert!(tx.has_intervention());
-    println!("SQLi attack blocked!");
-
-    Ok(())
-}
-```
-
-### XSS Detection
-
-```rust
-use zentinel_modsec::ModSecurity;
-
-fn main() -> zentinel_modsec::Result<()> {
-    let modsec = ModSecurity::from_string(r#"
-        SecRuleEngine On
-        SecRule ARGS "@detectXSS" \
-            "id:941100,phase:2,deny,status:403,msg:'XSS detected'"
-    "#)?;
-
-    let mut tx = modsec.new_transaction();
-
-    tx.process_uri("/comment?text=<script>alert(1)</script>", "GET", "HTTP/1.1")?;
-    tx.process_request_headers()?;
-
-    assert!(tx.has_intervention());
-    println!("XSS attack blocked!");
-
-    Ok(())
-}
-```
-
-### Request Body Inspection
-
-```rust
-use zentinel_modsec::ModSecurity;
-
-fn main() -> zentinel_modsec::Result<()> {
-    let modsec = ModSecurity::from_string(r#"
-        SecRuleEngine On
-        SecRequestBodyAccess On
-        SecRule REQUEST_BODY "@detectSQLi" \
-            "id:942110,phase:2,deny,status:403,msg:'SQLi in body'"
-    "#)?;
-
-    let mut tx = modsec.new_transaction();
-
-    tx.process_uri("/api/login", "POST", "HTTP/1.1")?;
-    tx.add_request_header("Content-Type", "application/x-www-form-urlencoded")?;
-    tx.process_request_headers()?;
-
-    // Add request body
-    tx.append_request_body(b"username=admin&password=' OR 1=1--")?;
-    tx.process_request_body()?;
-
-    assert!(tx.has_intervention());
-
-    Ok(())
-}
-```
-
-### Detection-Only Mode
-
-```rust
-use zentinel_modsec::ModSecurity;
-
-fn main() -> zentinel_modsec::Result<()> {
-    let modsec = ModSecurity::from_string(r#"
-        SecRuleEngine DetectionOnly
-        SecRule REQUEST_URI "@contains /admin" "id:1,phase:1,deny"
-    "#)?;
-
-    let mut tx = modsec.new_transaction();
-
-    tx.process_uri("/admin", "GET", "HTTP/1.1")?;
-    tx.process_request_headers()?;
-
-    // Rule matched but no intervention (detection only)
-    assert!(!tx.has_intervention());
-    assert!(tx.matched_rules().contains(&"1".to_string()));
-
-    println!("Detected but not blocked: {:?}", tx.matched_rules());
-
-    Ok(())
-}
-```
-
-### Anomaly Scoring
-
-```rust
-use zentinel_modsec::ModSecurity;
-
-fn main() -> zentinel_modsec::Result<()> {
-    let modsec = ModSecurity::from_string(r#"
-        SecRuleEngine On
-
-        # Increment score for suspicious patterns
-        SecRule REQUEST_URI "@contains /admin" \
-            "id:1,phase:1,pass,setvar:'TX.anomaly_score=+5'"
-        SecRule REQUEST_HEADERS:User-Agent "@contains sqlmap" \
-            "id:2,phase:1,pass,setvar:'TX.anomaly_score=+10'"
-
-        # Block if score exceeds threshold
-        SecRule TX:anomaly_score "@ge 10" \
-            "id:100,phase:1,deny,status:403,msg:'Anomaly score exceeded'"
-    "#)?;
-
-    let mut tx = modsec.new_transaction();
-
-    tx.process_uri("/admin", "GET", "HTTP/1.1")?;
-    tx.add_request_header("User-Agent", "sqlmap/1.0")?;
-    tx.process_request_headers()?;
-
-    println!("Anomaly score: {}", tx.anomaly_score());
-    assert!(tx.has_intervention());
-
-    Ok(())
-}
-```
-
-## Framework Integration
-
-### Axum
-
-```rust
-use axum::{
-    body::Body,
-    extract::State,
-    http::{Request, StatusCode},
-    middleware::{self, Next},
-    response::Response,
-    routing::get,
-    Router,
-};
-use zentinel_modsec::ModSecurity;
-use std::sync::Arc;
-
-async fn waf_middleware(
-    State(modsec): State<Arc<ModSecurity>>,
-    request: Request<Body>,
-    next: Next,
-) -> Result<Response, StatusCode> {
-    let mut tx = modsec.new_transaction();
-
-    // Process request
-    tx.process_uri(
-        request.uri().path_and_query().map(|pq| pq.as_str()).unwrap_or("/"),
-        request.method().as_str(),
-        "HTTP/1.1",
-    ).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    for (name, value) in request.headers() {
-        if let Ok(v) = value.to_str() {
-            let _ = tx.add_request_header(name.as_str(), v);
-        }
-    }
-
-    tx.process_request_headers()
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    // Check for intervention
-    if let Some(intervention) = tx.intervention() {
-        return Err(StatusCode::from_u16(intervention.status).unwrap_or(StatusCode::FORBIDDEN));
-    }
-
-    Ok(next.run(request).await)
-}
-
-#[tokio::main]
-async fn main() {
-    let modsec = Arc::new(ModSecurity::from_file("/etc/modsecurity/main.conf").unwrap());
-
-    let app = Router::new()
-        .route("/", get(|| async { "Hello, World!" }))
-        .layer(middleware::from_fn_with_state(modsec.clone(), waf_middleware))
-        .with_state(modsec);
-
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
-    axum::serve(listener, app).await.unwrap();
-}
-```
-
-### Actix-web
-
-```rust
-use actix_web::{web, App, HttpServer, HttpRequest, HttpResponse, middleware};
-use zentinel_modsec::ModSecurity;
-use std::sync::Arc;
-
-async fn waf_check(
-    req: HttpRequest,
-    modsec: web::Data<Arc<ModSecurity>>,
-) -> Option<HttpResponse> {
-    let mut tx = modsec.new_transaction();
-
-    tx.process_uri(req.uri().path_and_query().map(|pq| pq.as_str()).unwrap_or("/"),
-                   req.method().as_str(),
-                   "HTTP/1.1").ok()?;
-
-    for (name, value) in req.headers() {
-        if let Ok(v) = value.to_str() {
-            let _ = tx.add_request_header(name.as_str(), v);
-        }
-    }
-
-    tx.process_request_headers().ok()?;
-
-    tx.intervention().map(|i| {
-        HttpResponse::build(actix_web::http::StatusCode::from_u16(i.status).unwrap())
-            .body(format!("Blocked by rule: {:?}", i.rule_ids))
-    })
-}
-```
-
-## Supported SecLang Directives
-
-### Directives
-
-| Directive | Status | Description |
-|-----------|--------|-------------|
-| `SecRule` | ✅ | Main rule directive |
-| `SecAction` | ✅ | Unconditional action |
-| `SecMarker` | ✅ | Named marker for skipAfter |
-| `SecRuleEngine` | ✅ | On/Off/DetectionOnly |
-| `SecRequestBodyAccess` | ✅ | Enable body inspection |
-| `SecResponseBodyAccess` | ✅ | Enable response inspection |
-| `Include` | ✅ | Include other rule files |
-
-### Operators
-
-| Operator | Status | Description |
-|----------|--------|-------------|
-| `@rx` | ✅ | Regular expression |
-| `@pm` | ✅ | Phrase match (Aho-Corasick) |
-| `@pmFromFile` | ✅ | Phrase match from file |
-| `@contains` | ✅ | String contains |
-| `@streq` | ✅ | String equals |
-| `@beginsWith` | ✅ | String begins with |
-| `@endsWith` | ✅ | String ends with |
-| `@within` | ✅ | Value within list |
-| `@eq`, `@ne`, `@gt`, `@ge`, `@lt`, `@le` | ✅ | Numeric comparison |
-| `@detectSQLi` | ✅ | SQL injection detection |
-| `@detectXSS` | ✅ | XSS detection |
-| `@ipMatch` | ✅ | IP/CIDR matching |
-| `@validateUrlEncoding` | ✅ | URL encoding validation |
-| `@validateUtf8Encoding` | ✅ | UTF-8 validation |
-
-### Transformations
-
-| Transformation | Status | Description |
-|----------------|--------|-------------|
-| `t:lowercase` | ✅ | Convert to lowercase |
-| `t:uppercase` | ✅ | Convert to uppercase |
-| `t:urlDecode` | ✅ | URL decode |
-| `t:urlDecodeUni` | ✅ | URL decode (Unicode) |
-| `t:base64Decode` | ✅ | Base64 decode |
-| `t:base64Encode` | ✅ | Base64 encode |
-| `t:htmlEntityDecode` | ✅ | HTML entity decode |
-| `t:removeWhitespace` | ✅ | Remove whitespace |
-| `t:compressWhitespace` | ✅ | Compress whitespace |
-| `t:normalizePath` | ✅ | Normalize path |
-| `t:normalizePathWin` | ✅ | Normalize Windows path |
-| `t:cmdLine` | ✅ | Command line normalization |
-| `t:md5` | ✅ | MD5 hash |
-| `t:sha1` | ✅ | SHA1 hash |
-| `t:hexEncode` | ✅ | Hex encode |
-| `t:hexDecode` | ✅ | Hex decode |
-
-### Actions
-
-| Action | Status | Description |
-|--------|--------|-------------|
-| `deny` | ✅ | Block request |
-| `block` | ✅ | Block with default status |
-| `pass` | ✅ | Continue processing |
-| `allow` | ✅ | Skip remaining rules |
-| `redirect` | ✅ | Redirect to URL |
-| `drop` | ✅ | Drop connection |
-| `chain` | ✅ | Chain to next rule |
-| `skip` | ✅ | Skip N rules |
-| `skipAfter` | ✅ | Skip to marker |
-| `setvar` | ✅ | Set variable |
-| `capture` | ✅ | Capture regex groups |
-| `id` | ✅ | Rule ID |
-| `phase` | ✅ | Processing phase |
-| `severity` | ✅ | Severity level |
-| `msg` | ✅ | Log message |
-| `tag` | ✅ | Rule tag |
-
-## Why Pure Rust?
-
-1. **Performance** - 4-11x faster than C++ libmodsecurity, depending on workload
-2. **Safety** - Memory safety guaranteed, no buffer overflows
-3. **Portability** - Runs anywhere Rust compiles (including WASM)
-4. **Simplicity** - `cargo add zentinel-modsec`, no system dependencies
-5. **Auditability** - Single-language codebase, easier security review
-
-### Technical Optimizations
-
-- **PHF (Perfect Hash Functions)** - O(1) operator/variable lookup
-- **Lazy Regex Compilation** - Defer compilation to first use
-- **Aho-Corasick** - O(n) multi-pattern matching for `@pm`
-- **RegexSet** - Single-pass multi-regex evaluation for XSS detection
-- **Zero-Copy Parsing** - `Cow<str>` avoids allocations when possible
-- **No FFI Overhead** - Pure Rust, no cross-language calls
-
-## OWASP CRS Setup
+The crate also builds a small CLI for checking rule files:
 
 ```bash
-# Download OWASP Core Rule Set
+cargo install zentinel-modsec
+
+zentinel-modsec check -r rules.conf                 # parse, print the rule count
+zentinel-modsec dump  -r rules.conf                 # list rule IDs by phase
+zentinel-modsec test  -r rules.conf -u "/search?q=' OR 1=1--" -b ''
+```
+
+`test` runs phase 2 only when a body is given, so pass `-b ''` to evaluate
+phase-2 rules (which is where most CRS rules live) on a request without a body.
+
+## Usage
+
+### Phases
+
+Each `process_*` call runs one ModSecurity phase. Rules marked `phase:2` (all
+argument and body rules, including the CRS SQLi and XSS rules) only run when
+you call `process_request_body()`, even for a `GET` with no body:
+
+```rust
+let modsec = ModSecurity::from_string(r#"
+    SecRuleEngine On
+    SecRule ARGS "@detectSQLi" \
+        "id:942100,phase:2,deny,status:403,msg:'SQL injection'"
+"#)?;
+
+let mut tx = modsec.new_transaction();
+tx.process_uri("/search?q=' OR 1=1--", "GET", "HTTP/1.1")?;
+tx.process_request_headers()?; // phase 1: no intervention yet
+tx.process_request_body()?;    // phase 2: the rule runs here
+assert!(tx.has_intervention());
+```
+
+Request bodies need `SecRequestBodyAccess On`; feed them with
+`append_request_body()` before `process_request_body()`. Response phases are
+`process_response_headers()` and `process_response_body()`.
+
+### Detection only and anomaly scoring
+
+Under `SecRuleEngine DetectionOnly` rules match but never intervene;
+`tx.matched_rules()` lists what matched. `setvar` on `TX` works as in CRS, and
+`tx.anomaly_score()` returns the accumulated score:
+
+```rust
+let modsec = ModSecurity::from_string(r#"
+    SecRuleEngine On
+    SecRule REQUEST_URI "@contains /admin" \
+        "id:1,phase:1,pass,setvar:'TX.anomaly_score=+5'"
+    SecRule REQUEST_HEADERS:User-Agent "@contains sqlmap" \
+        "id:2,phase:1,pass,setvar:'TX.anomaly_score=+10'"
+    SecRule TX:anomaly_score "@ge 10" \
+        "id:100,phase:1,deny,status:403,msg:'Anomaly score exceeded'"
+"#)?;
+// a request to /admin with User-Agent sqlmap/1.0 scores 15 and is denied
+```
+
+### Loading the OWASP CRS
+
+```bash
 git clone https://github.com/coreruleset/coreruleset /etc/modsecurity/crs
 cp /etc/modsecurity/crs/crs-setup.conf.example /etc/modsecurity/crs/crs-setup.conf
-
-# Create an entry file that pulls in the setup and rule files
 cat > /etc/modsecurity/main.conf <<'EOF'
 Include /etc/modsecurity/crs/crs-setup.conf
 Include /etc/modsecurity/crs/rules/*.conf
@@ -448,24 +139,89 @@ EOF
 ```
 
 ```rust
-// Then load the entry file from your application:
 let modsec = zentinel_modsec::ModSecurity::from_file("/etc/modsecurity/main.conf")?;
+println!("loaded {} rules", modsec.rule_count());
 ```
+
+`ModSecurity` is `Send + Sync`: build it once, share it behind an `Arc`, and
+create one `Transaction` per request. The API is synchronous, so it can be
+called from any async runtime. A minimal Axum middleware:
+
+```rust
+async fn waf(
+    State(modsec): State<Arc<ModSecurity>>,
+    request: Request<Body>,
+    next: Next,
+) -> Result<Response, StatusCode> {
+    let mut tx = modsec.new_transaction();
+    let uri = request.uri().path_and_query().map(|pq| pq.as_str()).unwrap_or("/");
+    tx.process_uri(uri, request.method().as_str(), "HTTP/1.1")
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    for (name, value) in request.headers() {
+        if let Ok(v) = value.to_str() {
+            let _ = tx.add_request_header(name.as_str(), v);
+        }
+    }
+    tx.process_request_headers().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    // Phase 2 (arguments; add the body first if you inspect bodies).
+    tx.process_request_body().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if let Some(i) = tx.intervention() {
+        return Err(StatusCode::from_u16(i.status).unwrap_or(StatusCode::FORBIDDEN));
+    }
+    Ok(next.run(request).await)
+}
+```
+
+## What is supported
+
+**Directives:** `SecRule`, `SecAction`, `SecMarker`, `SecRuleEngine`,
+`SecDefaultAction`, `SecRuleRemoveById`, `SecRuleUpdateTargetById`,
+`SecRuleUpdateActionById`, `SecRequestBodyAccess`, `SecResponseBodyAccess`,
+`SecRequestBodyLimit`, `SecResponseBodyLimit`, `Include`. Other directives are
+logged and skipped.
+
+**Operators:** `@rx`, `@pm`, `@pmf`, `@pmFromFile`, `@contains`, `@beginsWith`,
+`@endsWith`, `@streq`, `@within`, `@eq`, `@ne`, `@gt`, `@ge`, `@lt`, `@le`,
+`@detectSQLi`, `@detectXSS`, `@ipMatch`, `@ipMatchFromFile`,
+`@validateUrlEncoding`, `@validateUtf8Encoding`, `@validateByteRange`,
+`@unconditionalMatch`, `@noMatch`. `@containsWord` and `@strmatch` are
+approximated by `@contains`.
+
+These parse but **never match**: `@verifyCC`, `@verifySSN`, `@verifyCPF`,
+`@validateHash`, `@validateDTD`, `@validateSchema`, `@rbl`, `@geoLookup`,
+`@gsbLookup`, `@inspectFile`, `@fuzzyHash`, `@rsub`. A rule that depends on one
+of them is inert.
+
+**Transformations:** `lowercase`, `uppercase`, `urlDecode`, `urlDecodeUni`,
+`urlEncode`, `base64Decode`, `base64DecodeExt`, `base64Encode`, `hexDecode`,
+`hexEncode`, `sqlHexDecode`, `htmlEntityDecode`, `jsDecode`, `cssDecode`,
+`escapeSeqDecode`, `utf8toUnicode`, `removeWhitespace`, `compressWhitespace`,
+`removeNulls`, `replaceNulls`, `trim`, `trimLeft`, `trimRight`,
+`normalizePath`, `normalizePathWin`, `removeComments`, `removeCommentsChar`,
+`replaceComments`, `cmdLine`, `md5`, `sha1`, `sha256`, `length`, `parityZero7bit`,
+`none`.
+
+**Body processors:** URL-encoded forms, multipart (including
+`MULTIPART_PART_HEADERS`), JSON and XML. XML is read with `quick-xml`, which
+does not expand entities. XPath is not supported: `XML:/*` and `XML://@*`
+(every `XML:` target in stock CRS) resolve against the flattened body, and
+richer XPath expressions are reported when the rules load.
+
+**Not implemented:** `UNIQUE_ID` and `FILES_COMBINED_SIZE`; rules that target
+only those are inert and reported at load time.
 
 ## CRS conformance
 
-The OWASP CRS ships a regression suite of roughly 5,000 request/expectation
-pairs, each naming the rule IDs that must — or must not — appear in the log for
-a given request. `tests/crs_conformance.rs` runs that corpus against this engine
-on every push, and CI fails if the number goes down.
+The OWASP CRS ships a regression suite of request/expectation pairs, each
+naming the rule IDs that must, or must not, appear in the log for a request.
+`tests/crs_conformance.rs` runs that corpus against this engine, and the CI
+`OWASP CRS conformance` job fails if the pass count differs from
+`MIN_PASSING` in either direction.
 
 | | |
 |---|---|
-| Corpus | CRS `main` (4.31.0-dev), 5,184 runnable cases |
-| Passing | **4,806 (92.7%)** |
-| Not runnable here | 41 — `encoded_request` payloads, and expectations about status rather than rule IDs |
-
-Reproduce it:
+| Corpus | CRS `main` (4.31.0-dev), pinned commit in `.github/workflows/ci.yml` |
+| Passing | **4,806** (`MIN_PASSING`) |
 
 ```bash
 mkdir -p test-rules
@@ -474,73 +230,81 @@ cp test-rules/crs/crs-setup.conf.example test-rules/crs/crs-setup.conf
 cargo test --release --test crs_conformance -- --nocapture
 ```
 
+Against an unpinned CRS checkout the count can differ from CI.
+
 ### What that number does and does not tell you
 
 The corpus runs in the configuration CRS documents for it: `DetectionOnly` at
 paranoia level 4. In that mode `block` never blocks, the paranoia gates never
-fire, and the anomaly score never reaches rule 949110 — so it measures whether
-individual rules **match**, and says nothing about whether the WAF **decides**
-correctly.
+fire, and the anomaly score never reaches rule 949110. It measures whether
+individual rules **match**, not whether the WAF **decides** correctly.
 
 That distinction is not academic. A set of defects that made a stock CRS
-deployment deny every request, `GET /` included, moved this number by 23 out of
-5,033, because none of the machinery they broke runs in this configuration.
-
-`stock_crs_blocks_attacks_and_passes_ordinary_traffic` in the same file covers
-the other half — real blocking mode, default paranoia, asserting the decision
-for ordinary requests and for attacks. Both are needed; neither substitutes for
-the other.
-
-### How it got here
+deployment deny every request, `GET /` included
+([#29](https://github.com/zentinelproxy/zentinel-modsec/issues/29)), moved
+this number by 23 cases, because none of the machinery they broke runs in this
+configuration. `stock_crs_blocks_attacks_and_passes_ordinary_traffic` in the
+same file covers the other half: real blocking mode, default paranoia,
+asserting the decision for ordinary requests and for attacks. Neither
+substitutes for the other.
 
 | | corpus |
 |---|---|
-| Before this work | 4,080 (81.1%) |
-| Stock CRS evaluation — `skipAfter` in phase ≥ 2, `TX` key case, `block` semantics, `REQUEST_LINE` ([#29](https://github.com/zentinelproxy/zentinel-modsec/issues/29)) | 4,103 |
-| `+` decoded as a space in form-encoded arguments ([#34](https://github.com/zentinelproxy/zentinel-modsec/issues/34)) | 4,228 |
+| Before the 2026 evaluation fixes | 4,080 |
+| Stock CRS evaluation: `skipAfter` in phase 2+, `TX` key case, `block` semantics, `REQUEST_LINE` ([#29](https://github.com/zentinelproxy/zentinel-modsec/issues/29)) | 4,103 |
+| `+` decoded as a space in form arguments ([#34](https://github.com/zentinelproxy/zentinel-modsec/issues/34)) | 4,228 |
 | Form parameter with no `=` kept rather than dropped ([#38](https://github.com/zentinelproxy/zentinel-modsec/issues/38)) | 4,541 |
-| `t:cmdLine` completed ([#31](https://github.com/zentinelproxy/zentinel-modsec/issues/31)) | **4,608** |
+| `t:cmdLine` completed ([#31](https://github.com/zentinelproxy/zentinel-modsec/issues/31)) | 4,608 |
+| Later fixes, current `main` | 4,806 |
 
-Two of those were bypasses — `+` encoding and the missing `=` each let a
+Two of those were bypasses: the `+` encoding and the missing `=` each let a
 payload reach the application while the engine inspected nothing.
 
-Note that #29 barely moves this number while being by far the most serious of
-the four: in `DetectionOnly` none of the machinery it broke runs. It is the
-clearest illustration of why the corpus alone is not a health check.
+## Performance
 
-### Known gaps
+Measured with criterion in `benches/libmodsec_compare.rs`: both engines run the
+same ruleset through request phases 1 and 2, single thread, on an Apple
+M-series machine. Absolute numbers depend on hardware; the ratios are the
+point.
 
-The remaining ~8% is a long tail rather than one cause — the largest single
-rule file accounts for 21 cases. Known specifics:
+| Benchmark | zentinel-modsec | libmodsecurity 3 (C++) |
+|---|---|---|
+| Clean request | 1.34 µs | 5.65 µs |
+| SQLi detection | 1.40 µs | 16.03 µs |
+| Body processing | 1.45 µs | 12.91 µs |
+| Rule parsing (complex) | 2.73 µs | 10.58 µs |
 
-- `UNIQUE_ID` and `FILES_COMBINED_SIZE` are unimplemented; rules targeting only
-  those are inert and are reported at load time.
-- XPath selection of XML is not supported. `XML:/*` and `XML://@*` — every
-  `XML:` target in stock CRS — resolve against the flattened body; richer XPath
-  expressions are reported when the rules load rather than silently matching
-  nothing.
+Reproduce with `cargo bench --features libmodsec-compare` (needs
+libmodsecurity installed); `cargo bench` alone runs the engine's own benches.
+An earlier version of this table claimed 10-30x; that benchmark never reached
+the phase-2 detection rule on either engine
+([#15](https://github.com/zentinelproxy/zentinel-modsec/issues/15)). These
+figures are the re-measurement after #15, #17 and #18.
 
-## Comparison
+## Development
 
-| Feature | zentinel-modsec | libmodsecurity | mod_security |
-|---------|-----------------|----------------|--------------|
-| Language | Pure Rust | C++ | C |
-| Dependencies | None | PCRE, libxml2, etc. | Apache/nginx |
-| Performance | 676K req/s | 168K req/s | ~200K req/s |
-| CRS conformance | [measured](#crs-conformance) | reference implementation | reference implementation |
-| WASM Support | ✅ | ❌ | ❌ |
-| Memory Safety | ✅ Guaranteed | ❌ Manual | ❌ Manual |
+```bash
+cargo build
+SKIP_CRS_CONFORMANCE=1 cargo test --all-targets   # unit and integration tests
+cargo test --release --test crs_conformance        # needs test-rules/crs, see above
+cargo fmt --all --check
+cargo clippy --all-targets -- -D warnings
+```
+
+Minimum Rust: 1.94.1 (`rust-version` in `Cargo.toml`).
+
+## Related
+
+- [ZentinelSec agent](https://registry.zentinelproxy.io/zentinelsec/): the Zentinel agent built on this engine
+- [OWASP CRS](https://coreruleset.org)
+- [libmodsecurity](https://github.com/owasp-modsecurity/ModSecurity): the reference C++ implementation
 
 ## License
 
-Apache-2.0
+Apache-2.0, see [`LICENSE`](LICENSE).
 
-## Contributing
+---
 
-Contributions welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
-## Related Projects
-
-- [Zentinel](https://zentinelproxy.io) - Extensible reverse proxy using this engine
-- [OWASP CRS](https://coreruleset.org) - Core Rule Set for ModSecurity
-- [libmodsecurity](https://github.com/SpiderLabs/ModSecurity) - Original C++ implementation
+<p align="center">
+  <sub>Part of <a href="https://zentinelproxy.io">Zentinel</a>, the security-first reverse proxy. The shisa guards the gate.</sub>
+</p>

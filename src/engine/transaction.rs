@@ -71,7 +71,6 @@ pub struct Transaction {
     /// whole transaction, because audit logging wants to answer "what did
     /// rule 942100 actually see" after the fact.
     matched_data: Vec<MatchedData>,
-    scoring_rules: Vec<String>,
 }
 
 /// The variable a rule matched on.
@@ -141,7 +140,6 @@ impl Transaction {
             captures: Vec::new(),
             controls: TransactionControls::default(),
             matched_data: Vec::new(),
-            scoring_rules: Vec::new(),
         }
     }
 
@@ -172,16 +170,6 @@ impl Transaction {
     /// rules fired, this says what they saw.
     pub fn matched_data(&self) -> &[MatchedData] {
         &self.matched_data
-    }
-
-    /// IDs of the rules that raised an anomaly score (a positive increment of
-    /// a `*_anomaly_score_plN` TX variable), in the order they fired.
-    ///
-    /// Unlike [`matched_rules`](Self::matched_rules), this leaves out CRS setup
-    /// actions, paranoia-level gates and chains that did not complete: it is
-    /// the list of findings behind a block by rule 949110.
-    pub fn scoring_rules(&self) -> &[String] {
-        &self.scoring_rules
     }
 
     /// Process the request URI.
@@ -527,11 +515,9 @@ impl Transaction {
                 // before descending into the next link, and CRS relies on it
                 // (a starter's `setvar:tx.x=%{MATCHED_VAR}` is read by the
                 // links after it). Every other action waits for the whole
-                // chain. A continuation link has no id; the score belongs to
-                // the chain's starter.
-                let link_rule_id = rule.id.clone().or_else(|| pending_chain_id.clone());
+                // chain.
                 for op in std::mem::take(&mut action_result.setvar_ops) {
-                    self.apply_setvar(&op, link_rule_id.as_deref());
+                    self.apply_setvar(&op);
                 }
 
                 if rule.is_chain {
@@ -897,7 +883,7 @@ impl Transaction {
     }
 
     /// Apply a setvar operation.
-    fn apply_setvar(&mut self, op: &SetVarOp, rule_id: Option<&str>) {
+    fn apply_setvar(&mut self, op: &SetVarOp) {
         // A macro-bearing value (e.g. `+%{tx.critical_anomaly_score}`) is
         // resolved here, where TX state is available, then re-interpreted as a
         // concrete set/increment/decrement.
@@ -909,30 +895,13 @@ impl Transaction {
                 operation: interpret_setvar_rhs(&expanded),
             };
             crate::actions::apply_setvar(&mut self.tx, &resolved);
-            self.note_scoring_rule(&resolved, rule_id);
         } else {
             crate::actions::apply_setvar(&mut self.tx, op);
-            self.note_scoring_rule(op, rule_id);
         }
 
         // Sync anomaly score from TX if relevant
         if op.name == "anomaly_score" {
             self.anomaly_score.sync_from_tx(&self.tx);
-        }
-    }
-}
-
-impl Transaction {
-    /// Remember the rule behind a positive CRS anomaly-score increment
-    /// (`tx.inbound_anomaly_score_pl1=+5` and friends).
-    fn note_scoring_rule(&mut self, op: &SetVarOp, rule_id: Option<&str>) {
-        let Some(id) = rule_id else { return };
-        let adds = matches!(&op.operation, SetVarOperation::Increment(n) if *n > 0);
-        if adds
-            && op.name.to_ascii_lowercase().contains("anomaly_score_pl")
-            && !self.scoring_rules.iter().any(|r| r == id)
-        {
-            self.scoring_rules.push(id.to_string());
         }
     }
 }

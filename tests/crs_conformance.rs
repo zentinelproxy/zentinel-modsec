@@ -65,7 +65,7 @@ use zentinel_modsec::ModSecurity;
 /// 30cb436, the commit CI fetches). The corpus upstream keeps moving, so a
 /// change after bumping that commit is worth reading as new tests before
 /// reading it as a regression.
-const MIN_PASSING: u32 = 4806;
+const MIN_PASSING: u32 = 4888;
 
 /// Corpus stages that cannot be driven from here: an `encoded_request` payload,
 /// or an expectation that is not about rule IDs (`status`, `match_regex`).

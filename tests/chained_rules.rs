@@ -68,22 +68,35 @@ fn three_link_chain_requires_all_three() {
 }
 
 #[test]
-fn setvar_on_the_starter_only_applies_when_the_chain_completes() {
-    // The starter sets an anomaly score; a later rule denies on that score.
-    // A partial chain match must leave the score untouched.
+fn the_starters_setvar_runs_when_the_starter_matches() {
+    // libmodsecurity runs a link's `setvar` as soon as that link matches,
+    // independent of the rest of the chain (src/rule_with_actions.cc,
+    // executeActionsIndependentOfChainedRuleResult), and CRS relies on it: 920420
+    // stores `%{tx.0}` in the starter and tests it in the next link. Only the
+    // disruptive action waits for the whole chain.
     let rules = "SecRuleEngine On\n\
          SecRule REQUEST_URI \"@contains admin\" \"id:1,phase:1,pass,nolog,setvar:tx.score=5,chain\"\n\
          SecRule REQUEST_METHOD \"@streq GET\"\n\
          SecRule TX:score \"@ge 5\" \"id:2,phase:1,deny\"";
 
+    assert!(blocked(rules, "/admin", "GET"));
     assert!(
-        blocked(rules, "/admin", "GET"),
-        "complete chain should set the score"
+        blocked(rules, "/admin", "POST"),
+        "the starter matched, so its setvar ran even though the chain did not complete"
     );
     assert!(
-        !blocked(rules, "/admin", "POST"),
-        "partial chain match must not apply the starter's setvar"
+        !blocked(rules, "/public", "GET"),
+        "no starter match, no setvar"
     );
+}
+
+#[test]
+fn the_starters_disruptive_action_waits_for_the_whole_chain() {
+    let rules = "SecRuleEngine On\n\
+         SecRule REQUEST_URI \"@contains admin\" \"id:1,phase:1,deny,setvar:tx.s=1,chain\"\n\
+         SecRule REQUEST_METHOD \"@streq GET\"";
+    assert!(blocked(rules, "/admin", "GET"));
+    assert!(!blocked(rules, "/admin", "POST"));
 }
 
 #[test]

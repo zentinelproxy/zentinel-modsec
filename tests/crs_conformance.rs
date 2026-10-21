@@ -65,7 +65,7 @@ use zentinel_modsec::ModSecurity;
 /// 30cb436, the commit CI fetches). The corpus upstream keeps moving, so a
 /// change after bumping that commit is worth reading as new tests before
 /// reading it as a regression.
-const MIN_PASSING: u32 = 4806;
+const MIN_PASSING: u32 = 4900;
 
 /// Corpus stages that cannot be driven from here: an `encoded_request` payload,
 /// or an expectation that is not about rule IDs (`status`, `match_regex`).
@@ -435,6 +435,17 @@ fn stock_crs_blocks_attacks_and_passes_ordinary_traffic() {
             "/f?p=../../../../etc/passwd",
             "",
             b"",
+        ),
+        // Detected only by rules whose anomaly score sits on the last link of
+        // a chain (920170, 920420): invisible while that `setvar` did not run.
+        ("GET with a body", true, "GET", "/", "text/plain", b"hi"),
+        (
+            "unknown Content-Type",
+            true,
+            "POST",
+            "/",
+            "my-new-content-type",
+            b"hi=test",
         ),
     ];
 

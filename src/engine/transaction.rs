@@ -9,7 +9,8 @@ use super::phase::Phase;
 use super::ruleset::{CompiledRule, CompiledRuleset, RuleEngineMode};
 use super::scoring::AnomalyScore;
 use crate::actions::{
-    execute_actions, ActionResult, DisruptiveOutcome, FlowOutcome, SetVarOp, SetVarOperation,
+    execute_actions, ActionResult, DisruptiveOutcome, FlowOutcome, SetVarOp as RuleSetVar,
+    SetVarOperation,
 };
 use crate::error::Result;
 use crate::operators::{compile_operator, Operator};
@@ -71,6 +72,8 @@ pub struct Transaction {
     /// whole transaction, because audit logging wants to answer "what did
     /// rule 942100 actually see" after the fact.
     matched_data: Vec<MatchedData>,
+    /// What each `setvar` that ran did, in order. See [`SetVarEffect`].
+    setvar_effects: Vec<SetVarEffect>,
 }
 
 /// The variable a rule matched on.
@@ -127,6 +130,40 @@ pub struct MatchedData {
     pub matched_portion: Option<String>,
 }
 
+/// What a `setvar` did to a collection.
+///
+/// The value of a `Set` is the effective one: any `%{...}` macro in the rule
+/// has been expanded, and so has the sign of an increment or decrement.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SetVarOp {
+    /// `setvar:tx.name=value`
+    Set(String),
+    /// `setvar:tx.name=+n`
+    Increment(i64),
+    /// `setvar:tx.name=-n`
+    Decrement(i64),
+    /// `setvar:!tx.name`
+    Delete,
+}
+
+/// One `setvar` that ran, with the rule it belongs to.
+///
+/// The engine records these without interpreting them: it does not know which
+/// variables a ruleset uses for scoring. A caller that wants "the rules that
+/// raised the anomaly score" filters on `key` and `op` itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SetVarEffect {
+    /// ID of the rule, or for a chain link without an id of its own, of the
+    /// chain's starter.
+    pub rule_id: String,
+    /// Collection named by the rule, lowercased: `"tx"`.
+    pub collection: String,
+    /// Variable name as written in the rule, e.g. `inbound_anomaly_score_pl1`.
+    pub key: String,
+    /// The operation, with macros already expanded.
+    pub op: SetVarOp,
+}
+
 impl Transaction {
     /// Create a new transaction.
     pub fn new(ruleset: Arc<CompiledRuleset>, default_status: u16) -> Self {
@@ -145,6 +182,7 @@ impl Transaction {
             captures: Vec::new(),
             controls: TransactionControls::default(),
             matched_data: Vec::new(),
+            setvar_effects: Vec::new(),
         }
     }
 
@@ -175,6 +213,20 @@ impl Transaction {
     /// rules fired, this says what they saw.
     pub fn matched_data(&self) -> &[MatchedData] {
         &self.matched_data
+    }
+
+    /// Every `setvar` that ran in this transaction, in order of execution.
+    ///
+    /// A `setvar` on a chain link runs when that link matches, so a chain that
+    /// fails later still leaves the effects of its earlier links here; they are
+    /// attributed to the chain's starter. A `setvar` of a rule with no id is
+    /// not listed.
+    ///
+    /// Pairs with [`matched_rules`](Self::matched_rules) and
+    /// [`matched_data`](Self::matched_data): those say which rules fired and
+    /// what they saw, this says what they did to TX.
+    pub fn setvar_effects(&self) -> &[SetVarEffect] {
+        &self.setvar_effects
     }
 
     /// Process the request URI.
@@ -498,6 +550,7 @@ impl Transaction {
                     .actions
                     .iter()
                     .any(|a| matches!(a, Action::Data(DataAction::Capture)));
+                let link_rule_id = rule.id.clone().or_else(|| pending_chain_id.clone());
 
                 // `capture` and `setvar` run once for each variable the
                 // operator matched, in order, as libmodsecurity does
@@ -509,7 +562,8 @@ impl Transaction {
                 // not the rest of the chain does (`executeActionsIndependent
                 // OfChainedRuleResult`), and CRS relies on it (a starter's
                 // `setvar:tx.x=%{MATCHED_VAR}` is read by the links after it).
-                // Every other action waits for the whole chain.
+                // Every other action waits for the whole chain. A continuation
+                // link has no id; its effects belong to the chain's starter.
                 for (n, m) in outcome.matches.iter().enumerate() {
                     if let Some(var) = &m.matched_variable {
                         self.matched_vars
@@ -532,7 +586,7 @@ impl Transaction {
                         self.store_captures(whole, &m.captures);
                     }
                     for op in &setvar_ops {
-                        self.apply_setvar(op);
+                        self.apply_setvar(op, link_rule_id.as_deref());
                     }
                 }
 
@@ -899,7 +953,7 @@ impl Transaction {
     }
 
     /// Apply a setvar operation.
-    fn apply_setvar(&mut self, op: &SetVarOp) {
+    fn apply_setvar(&mut self, op: &RuleSetVar, rule_id: Option<&str>) {
         // The variable name may carry a macro too (CRS 920450:
         // `tx.header_name_920450_%{tx.0}`, one variable per request header);
         // without expanding it every header would overwrite one variable.
@@ -916,12 +970,31 @@ impl Transaction {
         } else {
             op.operation.clone()
         };
-        let resolved = SetVarOp {
+        let resolved = RuleSetVar {
             collection: op.collection.clone(),
             name,
             operation,
         };
         crate::actions::apply_setvar(&mut self.tx, &resolved);
+
+        if let Some(rule_id) = rule_id {
+            let effect_op = match &resolved.operation {
+                SetVarOperation::Set(v) => Some(SetVarOp::Set(v.clone())),
+                SetVarOperation::Increment(n) => Some(SetVarOp::Increment(*n)),
+                SetVarOperation::Decrement(n) => Some(SetVarOp::Decrement(*n)),
+                SetVarOperation::Delete => Some(SetVarOp::Delete),
+                // Resolved above; `apply_setvar` ignores it too.
+                SetVarOperation::Macro(_) => None,
+            };
+            if let Some(effect_op) = effect_op {
+                self.setvar_effects.push(SetVarEffect {
+                    rule_id: rule_id.to_string(),
+                    collection: resolved.collection.to_ascii_lowercase(),
+                    key: resolved.name.clone(),
+                    op: effect_op,
+                });
+            }
+        }
 
         // Sync anomaly score from TX if relevant
         if resolved.name == "anomaly_score" {

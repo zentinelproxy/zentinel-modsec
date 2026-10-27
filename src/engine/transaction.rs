@@ -909,10 +909,16 @@ impl Transaction {
             op.name.clone()
         };
         // A macro-bearing value (e.g. `+%{tx.critical_anomaly_score}`) is
-        // resolved here, where TX state is available, then re-interpreted as a
-        // concrete set/increment/decrement.
+        // resolved here, where TX state is available. Which operation it is
+        // comes from the text as written, before any expansion.
         let operation = if let SetVarOperation::Macro(raw) = &op.operation {
-            interpret_setvar_rhs(&self.expand_operator_macros(raw))
+            let (kind, operand) = split_setvar_rhs(raw);
+            let operand = self.expand_operator_macros(operand);
+            match kind {
+                SetVarKind::Set => SetVarOperation::Set(operand),
+                SetVarKind::Add => SetVarOperation::Increment(leading_int(&operand)),
+                SetVarKind::Subtract => SetVarOperation::Decrement(leading_int(&operand)),
+            }
         } else {
             op.operation.clone()
         };
@@ -930,17 +936,53 @@ impl Transaction {
     }
 }
 
-/// Interpret an already-expanded setvar right-hand side into a concrete
-/// operation, honouring a leading `+`/`-` for increment/decrement. An empty or
-/// non-numeric increment/decrement (e.g. an unresolved macro) becomes a no-op.
-fn interpret_setvar_rhs(value: &str) -> SetVarOperation {
-    if let Some(rest) = value.strip_prefix('+') {
-        SetVarOperation::Increment(rest.trim().parse().unwrap_or(0))
-    } else if let Some(rest) = value.strip_prefix('-') {
-        SetVarOperation::Decrement(rest.trim().parse().unwrap_or(0))
+/// How a `setvar` right-hand side changes its variable.
+enum SetVarKind {
+    /// `setvar:tx.x=value`
+    Set,
+    /// `setvar:tx.x=+n`
+    Add,
+    /// `setvar:tx.x=-n`
+    Subtract,
+}
+
+/// Split a `setvar` right-hand side, as written in the rule, into the
+/// operation and the text of its operand.
+///
+/// libmodsecurity fixes the operation when it parses the rule: `=+` and `=-`
+/// are tokens of their own (`seclang-scanner.ll:489-490`, `726-728`, mapped
+/// to `sumAndSetOperation` and `substractAndSetOperation` at
+/// `seclang-parser.yy:3145-3152`), and only the operand after them is a
+/// run-time string. So `setvar:tx.x=%{tx.0}` is an assignment even when
+/// `TX:0` expands to `-7`; reading the sign after expansion would turn it into
+/// a decrement.
+fn split_setvar_rhs(raw: &str) -> (SetVarKind, &str) {
+    if let Some(rest) = raw.strip_prefix('+') {
+        (SetVarKind::Add, rest)
+    } else if let Some(rest) = raw.strip_prefix('-') {
+        (SetVarKind::Subtract, rest)
     } else {
-        SetVarOperation::Set(value.to_string())
+        (SetVarKind::Set, raw)
     }
+}
+
+/// The integer at the start of an expanded operand, or 0 when there is none.
+///
+/// libmodsecurity reads the operand with `stoi` and takes 0 if that throws
+/// (`set_var.cc:93-100`), so `5abc` is 5, `abc` and the empty string are 0,
+/// and a sign belongs to the number: `=+%{tx.0}` with `TX:0` = `-7` adds -7.
+/// (Not identical to `stoi`: that is 32-bit, this is 64-bit, and `trim_start`
+/// skips Unicode whitespace where `stoi` skips the C locale's `isspace`.)
+fn leading_int(s: &str) -> i64 {
+    let s = s.trim_start();
+    let digits = s
+        .strip_prefix(['+', '-'])
+        .unwrap_or(s)
+        .bytes()
+        .take_while(u8::is_ascii_digit)
+        .count();
+    let sign = s.len() - s.strip_prefix(['+', '-']).unwrap_or(s).len();
+    s[..sign + digits].parse().unwrap_or(0)
 }
 
 impl std::fmt::Debug for Transaction {

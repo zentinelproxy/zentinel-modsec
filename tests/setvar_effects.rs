@@ -6,7 +6,7 @@
 //! key.
 
 use std::path::PathBuf;
-use zentinel_modsec::engine::{SetVarEffect, SetVarOp, Transaction};
+use zentinel_modsec::engine::{SetVarChange, SetVarEffect, Transaction};
 use zentinel_modsec::ModSecurity;
 
 fn run(rules: &str, uri: &str) -> Transaction {
@@ -21,7 +21,7 @@ fn run(rules: &str, uri: &str) -> Transaction {
     tx
 }
 
-fn effect(rule_id: &str, key: &str, op: SetVarOp) -> SetVarEffect {
+fn effect(rule_id: &str, key: &str, op: SetVarChange) -> SetVarEffect {
     SetVarEffect {
         rule_id: rule_id.to_string(),
         collection: "tx".to_string(),
@@ -39,12 +39,12 @@ fn set_increment_decrement_and_delete_are_recorded_in_order() {
     assert_eq!(
         tx.setvar_effects(),
         [
-            effect("1", "name", SetVarOp::Set("abc".into())),
+            effect("1", "name", SetVarChange::Set("abc".into())),
             // A numeric assignment is a Set, as in the engine's own TX.
-            effect("1", "count", SetVarOp::Set("5".into())),
-            effect("1", "score", SetVarOp::Increment(3)),
-            effect("2", "score", SetVarOp::Decrement(1)),
-            effect("2", "name", SetVarOp::Delete),
+            effect("1", "count", SetVarChange::Set("5".into())),
+            effect("1", "score", SetVarChange::Increment(3)),
+            effect("2", "score", SetVarChange::Decrement(1)),
+            effect("2", "name", SetVarChange::Delete),
         ]
     );
 }
@@ -80,9 +80,13 @@ fn a_chain_links_effects_belong_to_the_starter() {
     assert_eq!(
         tx.setvar_effects(),
         [
-            effect("10", "seen", SetVarOp::Set("1".into())),
-            effect("10", "mid", SetVarOp::Increment(1)),
-            effect("10", "inbound_anomaly_score_pl1", SetVarOp::Increment(5)),
+            effect("10", "seen", SetVarChange::Set("1".into())),
+            effect("10", "mid", SetVarChange::Increment(1)),
+            effect(
+                "10",
+                "inbound_anomaly_score_pl1",
+                SetVarChange::Increment(5)
+            ),
         ]
     );
     assert_eq!(tx.matched_rules(), ["10"]);
@@ -99,7 +103,7 @@ fn a_failed_chain_keeps_the_effects_of_the_links_that_ran() {
     let tx = run(rules, "/go");
     assert_eq!(
         tx.setvar_effects(),
-        [effect("10", "seen", SetVarOp::Set("1".into()))]
+        [effect("10", "seen", SetVarChange::Set("1".into()))]
     );
     assert!(tx.matched_rules().is_empty());
 }
@@ -122,10 +126,10 @@ fn a_rule_matching_several_values_records_an_effect_for_each() {
     assert_eq!(
         tx.setvar_effects(),
         [
-            effect("30", "hits", SetVarOp::Increment(1)),
-            effect("30", "seen_x-a", SetVarOp::Set("1".into())),
-            effect("30", "hits", SetVarOp::Increment(1)),
-            effect("30", "seen_x-b", SetVarOp::Set("1".into())),
+            effect("30", "hits", SetVarChange::Increment(1)),
+            effect("30", "seen_x-a", SetVarChange::Set("1".into())),
+            effect("30", "hits", SetVarChange::Increment(1)),
+            effect("30", "seen_x-b", SetVarChange::Set("1".into())),
         ]
     );
 }
@@ -143,11 +147,19 @@ fn macros_are_recorded_expanded() {
     assert_eq!(
         tx.setvar_effects(),
         [
-            effect("900", "critical_anomaly_score", SetVarOp::Set("5".into())),
-            effect("20", "inbound_anomaly_score_pl1", SetVarOp::Increment(5)),
-            effect("20", "path", SetVarOp::Set("go".into())),
-            effect("20", "tag", SetVarOp::Set("blue".into())),
-            effect("20", "down", SetVarOp::Decrement(5)),
+            effect(
+                "900",
+                "critical_anomaly_score",
+                SetVarChange::Set("5".into())
+            ),
+            effect(
+                "20",
+                "inbound_anomaly_score_pl1",
+                SetVarChange::Increment(5)
+            ),
+            effect("20", "path", SetVarChange::Set("go".into())),
+            effect("20", "tag", SetVarChange::Set("blue".into())),
+            effect("20", "down", SetVarChange::Decrement(5)),
         ]
     );
 }
@@ -195,7 +207,8 @@ fn stock_crs_xss_scores_are_increments_of_the_anomaly_score_variable() {
         .setvar_effects()
         .iter()
         .filter(|e| {
-            e.key.contains("anomaly_score_pl") && matches!(e.op, SetVarOp::Increment(n) if n > 0)
+            e.key.contains("anomaly_score_pl")
+                && matches!(e.op, SetVarChange::Increment(n) if n > 0)
         })
         .collect();
     let ids: Vec<&str> = scoring.iter().map(|e| e.rule_id.as_str()).collect();
@@ -208,7 +221,7 @@ fn stock_crs_xss_scores_are_increments_of_the_anomaly_score_variable() {
     assert!(scoring.iter().all(|e| e.collection == "tx"));
     assert!(scoring
         .iter()
-        .any(|e| matches!(e.op, SetVarOp::Increment(5))));
+        .any(|e| matches!(e.op, SetVarChange::Increment(5))));
 
     // The record accounts for the variable's value: the sum of the increments
     // is the score the blocking rule saw.
@@ -218,8 +231,8 @@ fn stock_crs_xss_scores_are_increments_of_the_anomaly_score_variable() {
         .iter()
         .filter(|e| e.key == "inbound_anomaly_score_pl1")
         .map(|e| match e.op {
-            SetVarOp::Increment(n) => n,
-            SetVarOp::Decrement(n) => -n,
+            SetVarChange::Increment(n) => n,
+            SetVarChange::Decrement(n) => -n,
             _ => 0,
         })
         .sum();

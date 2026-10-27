@@ -137,7 +137,7 @@ pub struct MatchedData {
 /// The value of a `Set` is the effective one: any `%{...}` macro in the rule
 /// has been expanded, and so has the sign of an increment or decrement.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SetVarOp {
+pub enum SetVarChange {
     /// `setvar:tx.name=value`
     Set(String),
     /// `setvar:tx.name=+n`
@@ -163,7 +163,7 @@ pub struct SetVarEffect {
     /// Variable name as written in the rule, e.g. `inbound_anomaly_score_pl1`.
     pub key: String,
     /// The operation, with macros already expanded.
-    pub op: SetVarOp,
+    pub op: SetVarChange,
 }
 
 impl Transaction {
@@ -997,10 +997,10 @@ impl Transaction {
 
         if let Some(rule_id) = rule_id.filter(|_| self.record_setvar_effects) {
             let effect_op = match &resolved.operation {
-                SetVarOperation::Set(v) => Some(SetVarOp::Set(v.clone())),
-                SetVarOperation::Increment(n) => Some(SetVarOp::Increment(*n)),
-                SetVarOperation::Decrement(n) => Some(SetVarOp::Decrement(*n)),
-                SetVarOperation::Delete => Some(SetVarOp::Delete),
+                SetVarOperation::Set(v) => Some(SetVarChange::Set(v.clone())),
+                SetVarOperation::Increment(n) => Some(SetVarChange::Increment(*n)),
+                SetVarOperation::Decrement(n) => Some(SetVarChange::Decrement(*n)),
+                SetVarOperation::Delete => Some(SetVarChange::Delete),
                 // Resolved above; `apply_setvar` ignores it too.
                 SetVarOperation::Macro(_) => None,
             };

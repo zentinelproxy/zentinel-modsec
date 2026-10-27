@@ -568,7 +568,7 @@ impl Transaction {
                     .actions
                     .iter()
                     .any(|a| matches!(a, Action::Data(DataAction::Capture)));
-                let link_rule_id = rule.id.clone().or_else(|| pending_chain_id.clone());
+                let link_rule_id = rule.id.as_deref().or(pending_chain_id.as_deref());
 
                 // `capture` and `setvar` run once for each variable the
                 // operator matched, in order, as libmodsecurity does
@@ -604,7 +604,7 @@ impl Transaction {
                         self.store_captures(whole, &m.captures);
                     }
                     for op in &setvar_ops {
-                        self.apply_setvar(op, link_rule_id.as_deref());
+                        self.apply_setvar(op, link_rule_id);
                     }
                 }
 

@@ -120,3 +120,17 @@ fn the_crs_score_shape_is_unchanged() {
         SecRule REQUEST_URI \"@rx x\" \"id:1,phase:1,pass,nolog,setvar:tx.critical_anomaly_score=5,setvar:tx.score=+%{tx.critical_anomaly_score},setvar:tx.score=+%{tx.critical_anomaly_score}\"";
     assert_eq!(tx_var(&run(rules, "/x"), "score"), "10");
 }
+
+#[test]
+fn capture_clears_the_slots_the_match_did_not_fill() {
+    // The first rule fills TX:1 and TX:2, the second only TX:1. In
+    // libmodsecurity v3 TX:2 would keep the first rule's value
+    // (`operators/rx.cc:104-113` stores, and never removes); this engine
+    // clears it, so a later rule cannot read a leftover.
+    let rules = "SecRuleEngine On\n\
+        SecRule REQUEST_URI \"@rx (a)(b)\" \"id:1,phase:1,pass,nolog,capture\"\n\
+        SecRule REQUEST_URI \"@rx (a)\" \"id:2,phase:1,pass,nolog,capture,setvar:tx.one=%{tx.1},setvar:tx.two=%{tx.2}\"";
+    let tx = run(rules, "/ab");
+    assert_eq!(tx_var(&tx, "one"), "a");
+    assert_eq!(tx_var(&tx, "two"), "");
+}

@@ -885,6 +885,14 @@ impl Transaction {
     /// `whole` is the text the operator matched (TX:0); `groups` are the regex
     /// groups, in order (TX:1...). Slots the match did not fill are removed so
     /// a stale value from an earlier rule cannot be read.
+    ///
+    /// Clearing all ten slots first is deliberate, and differs from
+    /// libmodsecurity v3: there each capture is stored on its own and nothing
+    /// is removed (`operators/rx.cc:104-113`), so a higher slot written by an
+    /// earlier rule survives a match that did not fill it. A rule that reads
+    /// `%{tx.3}` after a match with two groups then sees the old value. No
+    /// ruleset should depend on a leftover like that, so the stale read is
+    /// closed here.
     fn store_captures(&mut self, whole: Option<String>, groups: &[String]) {
         use crate::variables::MutableCollection;
         for i in 0..10 {

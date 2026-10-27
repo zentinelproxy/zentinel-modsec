@@ -134,8 +134,8 @@ pub struct MatchedData {
 
 /// What a `setvar` did to a collection.
 ///
-/// The value of a `Set` is the effective one: any `%{...}` macro in the rule
-/// has been expanded, and so has the sign of an increment or decrement.
+/// The values are the ones that were applied: any `%{...}` macro in the rule
+/// has been expanded.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SetVarChange {
     /// `setvar:tx.name=value`

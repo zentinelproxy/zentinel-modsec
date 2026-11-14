@@ -39,7 +39,7 @@ a different thing: it wraps the C++ libmodsecurity.
 
 ```toml
 [dependencies]
-zentinel-modsec = "0.5"
+zentinel-modsec = "0.6"
 ```
 
 ```rust
@@ -221,16 +221,17 @@ naming the rule IDs that must, or must not, appear in the log for a request.
 | | |
 |---|---|
 | Corpus | CRS `main` (4.31.0-dev), pinned commit in `.github/workflows/ci.yml` |
-| Passing | **4,806** (`MIN_PASSING`) |
+| Passing | **4,900 of 5,184 runnable cases (94.5%)** (`MIN_PASSING`) |
 
 ```bash
 mkdir -p test-rules
-git clone --depth 1 https://github.com/coreruleset/coreruleset.git test-rules/crs
+git clone https://github.com/coreruleset/coreruleset.git test-rules/crs
+git -C test-rules/crs checkout 30cb436   # the commit CI pins
 cp test-rules/crs/crs-setup.conf.example test-rules/crs/crs-setup.conf
 cargo test --release --test crs_conformance -- --nocapture
 ```
 
-Against an unpinned CRS checkout the count can differ from CI.
+Against another CRS checkout the count differs from CI.
 
 ### What that number does and does not tell you
 
@@ -255,7 +256,8 @@ substitutes for the other.
 | `+` decoded as a space in form arguments ([#34](https://github.com/zentinelproxy/zentinel-modsec/issues/34)) | 4,228 |
 | Form parameter with no `=` kept rather than dropped ([#38](https://github.com/zentinelproxy/zentinel-modsec/issues/38)) | 4,541 |
 | `t:cmdLine` completed ([#31](https://github.com/zentinelproxy/zentinel-modsec/issues/31)) | 4,608 |
-| Later fixes, current `main` | 4,806 |
+| Later fixes, 0.5.0 (`setvar`/`t:`/`ctl:` accumulate, CRLF rule files) | 4,806 |
+| Every chain link's `setvar` runs, captures fill `TX:0`..`TX:9`, collections iterate in insertion order, 0.6.0 ([#52](https://github.com/zentinelproxy/zentinel-modsec/pull/52), [#55](https://github.com/zentinelproxy/zentinel-modsec/pull/55)) | 4,900 |
 
 Two of those were bypasses: the `+` encoding and the missing `=` each let a
 payload reach the application while the engine inspected nothing.

@@ -481,6 +481,9 @@ impl Transaction {
         // every link matches, so they are held here until the chain completes.
         let mut pending_chain_actions: Option<ActionResult> = None;
         let mut pending_chain_id: Option<String> = None;
+        // What each link matched, held with the starter's id: a chain that
+        // fails part-way did not match, so it leaves nothing in matched_data.
+        let mut pending_chain_data: Vec<MatchedData> = Vec::new();
         let mut skip_count: u32 = 0;
         let mut skip_after: Option<String> = None;
 
@@ -525,6 +528,7 @@ impl Transaction {
                     chain_state.reset();
                     pending_chain_actions = None;
                     pending_chain_id = None;
+                    pending_chain_data.clear();
                     idx += 1;
                     while idx < rules.len() && rules[idx - 1].is_chain {
                         idx += 1;
@@ -588,13 +592,19 @@ impl Transaction {
                             .push((var.name.clone(), var.value.clone()));
                         // The audit record keeps the first match only: one
                         // entry per rule, however many values it hit.
+                        // A chain link's entry waits for the chain to complete.
                         if n == 0 {
-                            self.matched_data.push(MatchedData {
-                                rule_id: rule.id.clone(),
+                            let entry = MatchedData {
+                                rule_id: link_rule_id.map(str::to_string),
                                 variable: var.name.clone(),
                                 value: var.value.clone(),
                                 matched_portion: var.portion.clone(),
-                            });
+                            };
+                            if rule.is_chain || chain_state.in_chain {
+                                pending_chain_data.push(entry);
+                            } else {
+                                self.matched_data.push(entry);
+                            }
                         }
                     }
                     // TX:0 (the whole match) and TX:1..TX:9, before any setvar
@@ -636,6 +646,7 @@ impl Transaction {
                     if let Some(id) = pending_chain_id.take() {
                         self.matched_rules.push(id);
                     }
+                    self.matched_data.append(&mut pending_chain_data);
                     match pending_chain_actions.take() {
                         Some(mut held) => {
                             held.control_ops.extend(action_result.control_ops);
@@ -734,6 +745,7 @@ impl Transaction {
                     chain_state.reset();
                     pending_chain_actions = None;
                     pending_chain_id = None;
+                    pending_chain_data.clear();
                     while idx < rules.len() && rules[idx].is_chain {
                         idx += 1;
                     }

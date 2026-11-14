@@ -373,6 +373,15 @@ impl RequestData {
 
                     for attr in e.attributes().flatten() {
                         let attr_name = decode_name(attr.key.as_ref());
+                        // A namespace declaration (`xmlns`, `xmlns:p`) is
+                        // document structure, not data (Namespaces in XML
+                        // 1.0, section 3). Flattening it put `xmlns` into
+                        // ARGS_NAMES, which CRS 941130 reads as an XSS
+                        // attribute vector, blocking any namespaced document.
+                        // The declaration stays visible in REQUEST_BODY.
+                        if is_namespace_declaration(&attr_name) {
+                            continue;
+                        }
                         let value = attr
                             .decoded_and_normalized_value(
                                 quick_xml::XmlVersion::Implicit1_0,
@@ -511,6 +520,12 @@ fn resolve_entity(name: &str) -> Option<String> {
 /// rejecting a document over a malformed name when the payload is elsewhere.
 fn decode_name(raw: &[u8]) -> String {
     String::from_utf8_lossy(raw).to_string()
+}
+
+/// Whether an attribute's qualified name declares a namespace: `xmlns` itself
+/// or an `xmlns:<prefix>`.
+fn is_namespace_declaration(name: &str) -> bool {
+    name == "xmlns" || name.starts_with("xmlns:")
 }
 
 /// Decode one component of `application/x-www-form-urlencoded` input.

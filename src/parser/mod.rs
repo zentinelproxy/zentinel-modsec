@@ -40,10 +40,16 @@ use crate::error::{Error, Result, SourceLocation};
 use std::collections::HashMap;
 use std::path::Path;
 
+// Coraza counts Include directives cumulatively, including directives in
+// previously loaded files. One glob is one directive regardless of its size.
+const MAX_INCLUDES: usize = 100;
+
 /// Parser for ModSecurity configuration files.
 pub struct Parser {
     /// Parsed directives.
     directives: Vec<Directive>,
+    /// Number of Include directives expanded into this configuration.
+    include_count: usize,
     /// Current source location for error reporting.
     location: SourceLocation,
     /// Default actions to apply to rules, keyed by the phase they configure.
@@ -59,9 +65,27 @@ impl Parser {
     pub fn new() -> Self {
         Self {
             directives: Vec::new(),
+            include_count: 0,
             location: SourceLocation::default(),
             default_actions: HashMap::new(),
         }
+    }
+
+    /// Append one caller-supplied source atomically. Included files participate
+    /// in the same append, so rollback only needs a single checkpoint.
+    fn try_append(&mut self, parse: impl FnOnce(&mut Self) -> Result<()>) -> Result<()> {
+        let count = self.directives.len();
+        let includes = self.include_count;
+        let defaults = self.default_actions.clone();
+        let location = self.location.clone();
+        if let Err(error) = parse(self) {
+            self.directives.truncate(count);
+            self.include_count = includes;
+            self.default_actions = defaults;
+            self.location = location;
+            return Err(error);
+        }
+        Ok(())
     }
 
     /// Parse a configuration string.
@@ -71,6 +95,10 @@ impl Parser {
 
     /// Parse a configuration string with file location.
     pub fn parse_with_location(&mut self, input: &str, file: Option<&Path>) -> Result<()> {
+        self.try_append(|parser| parser.parse_input(input, file))
+    }
+
+    fn parse_input(&mut self, input: &str, file: Option<&Path>) -> Result<()> {
         self.location.file = file.map(|p| p.to_path_buf());
         self.location.line = 1;
         self.location.column = 1;
@@ -106,28 +134,34 @@ impl Parser {
 
     /// Parse a configuration file.
     pub fn parse_file(&mut self, path: &Path) -> Result<()> {
+        self.try_append(|parser| parser.read_file(path))
+    }
+
+    fn read_file(&mut self, path: &Path) -> Result<()> {
         let content = std::fs::read_to_string(path).map_err(|e| Error::RuleFileLoad {
             path: path.to_path_buf(),
             source: e,
         })?;
-        self.parse_with_location(&content, Some(path))
+        self.parse_input(&content, Some(path))
     }
 
     /// Parse files matching a glob pattern.
     pub fn parse_glob(&mut self, pattern: &str) -> Result<()> {
+        self.try_append(|parser| parser.read_glob(pattern))
+    }
+
+    fn read_glob(&mut self, pattern: &str) -> Result<()> {
         let paths = glob::glob(pattern)
             .map_err(|e| Error::parse(format!("invalid glob pattern: {}", e), pattern))?;
 
         for entry in paths {
-            match entry {
-                Ok(path) => {
-                    if path.is_file() {
-                        self.parse_file(&path)?;
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(error = %e, "error reading glob entry");
-                }
+            let path = entry.map_err(|e| Error::parse(e.to_string(), pattern))?;
+            let metadata = path.metadata().map_err(|source| Error::RuleFileLoad {
+                path: path.clone(),
+                source,
+            })?;
+            if metadata.is_file() {
+                self.read_file(&path)?;
             }
         }
 
@@ -397,27 +431,42 @@ impl Parser {
     /// Parse an Include directive.
     fn parse_include(&mut self, lexer: &mut Lexer) -> Result<Directive> {
         let path = self.expect_argument(lexer, "Include path")?;
+        if self.include_count >= MAX_INCLUDES {
+            return Err(Error::parse(
+                format!("configuration exceeds the limit of {MAX_INCLUDES} Include directives"),
+                self.location.to_string(),
+            ));
+        }
+        self.include_count += 1;
 
-        // Resolve relative paths (including globs) against the including file's
-        // directory. A glob pattern never `exists()` as a literal path, so it is
-        // detected explicitly rather than falling back to a CWD-relative path.
-        let resolved_path =
-            if let Some(parent) = self.location.file.as_ref().and_then(|f| f.parent()) {
-                let candidate = parent.join(&path);
-                let is_glob = path.contains(['*', '?', '[']);
-                if candidate.exists() || is_glob {
-                    candidate.to_string_lossy().to_string()
-                } else {
-                    path
-                }
-            } else {
-                path
-            };
+        let is_glob = path.contains(['*', '?', '[']);
+        let path = Path::new(&path);
+        let including_location = self.location.clone();
+        let parent = including_location
+            .file
+            .as_deref()
+            .and_then(Path::parent)
+            .filter(|_| path.is_relative())
+            .unwrap_or(Path::new(""));
+        let resolved_path = parent.join(path);
+        let parsed = if is_glob {
+            // Only the directive's operand is a pattern. The declaring
+            // directory may itself have brackets or other glob characters.
+            let parent = parent.to_str().ok_or_else(|| {
+                Error::parse(
+                    "glob include needs a UTF-8 directory",
+                    including_location.to_string(),
+                )
+            })?;
+            let escaped = glob::Pattern::escape(parent);
+            self.read_glob(&Path::new(&escaped).join(path).to_string_lossy())
+        } else {
+            self.read_file(&resolved_path)
+        };
+        self.location = including_location;
+        parsed?;
 
-        // Parse the included file(s)
-        self.parse_glob(&resolved_path)?;
-
-        Ok(Directive::Include(resolved_path.into()))
+        Ok(Directive::Include(resolved_path))
     }
 
     /// Expect an unquoted argument.
@@ -467,7 +516,8 @@ impl Parser {
     /// Skip to end of current line.
     fn skip_to_end_of_line(&self, lexer: &mut Lexer) {
         while let Some(token) = lexer.next_token() {
-            if matches!(token.kind, TokenKind::Newline) {
+            // Comment tokens already consume their terminating newline.
+            if matches!(token.kind, TokenKind::Comment | TokenKind::Newline) {
                 break;
             }
         }

@@ -77,10 +77,9 @@ impl<'a> Lexer<'a> {
     pub fn skip_whitespace(&mut self) {
         loop {
             match self.input.peek() {
-                // '\r' is whitespace too: a CRLF file would otherwise stop the
-                // token stream at the first line end and silently drop every
-                // directive after it.
-                Some(&' ') | Some(&'\t') | Some(&'\r') => {
+                // read_word stops at Unicode whitespace. Consume the same set
+                // of separators here, leaving line endings for next_token.
+                Some(&c) if c != '\n' && c.is_whitespace() => {
                     self.advance();
                 }
                 Some(&'\\') => {
@@ -160,15 +159,6 @@ impl<'a> Lexer<'a> {
                     line,
                     column,
                 })
-            }
-            '\\' => {
-                // Line continuation (LF or CRLF)
-                self.advance();
-                self.skip_cr_before_lf();
-                if self.peek() == Some('\n') {
-                    self.advance();
-                }
-                self.next_token()
             }
             _ => {
                 // Capture at_line_start BEFORE reading the word (since advance() will set it to false)

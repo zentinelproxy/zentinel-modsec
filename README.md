@@ -180,6 +180,11 @@ async fn waf(
 `SecRequestBodyLimit`, `SecResponseBodyLimit`, `Include`. Other directives are
 logged and skipped.
 
+Relative includes resolve beside the declaring file. A glob with no matches is
+allowed. An unreadable match fails the load. Each configuration accepts up to
+100 include directives, counting a glob once. If a parse fails, the parser
+retains the configuration it held before the call.
+
 **Operators:** `@rx`, `@pm`, `@pmf`, `@pmFromFile`, `@contains`, `@beginsWith`,
 `@endsWith`, `@streq`, `@within`, `@eq`, `@ne`, `@gt`, `@ge`, `@lt`, `@le`,
 `@detectSQLi`, `@detectXSS`, `@ipMatch`, `@ipMatchFromFile`,

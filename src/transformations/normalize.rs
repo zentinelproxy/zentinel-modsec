@@ -251,15 +251,7 @@ pub struct NormalizePathWin;
 
 impl Transformation for NormalizePathWin {
     fn transform<'a>(&self, input: &'a str) -> Cow<'a, str> {
-        // Same as NormalizePath but preserves backslashes
-        let np = NormalizePath;
-        let result = np.transform(input);
-        // Convert back to backslashes
-        if result.contains('/') {
-            Cow::Owned(result.replace('/', "\\"))
-        } else {
-            result
-        }
+        NormalizePath.transform(input)
     }
 
     fn name(&self) -> &'static str {
@@ -630,6 +622,13 @@ mod tests {
         assert_eq!(t.transform("/a/b/../c"), "/a/c");
         assert_eq!(t.transform("/a//b/./c"), "/a/b/c");
         assert_eq!(t.transform("a\\b\\c"), "a/b/c");
+    }
+
+    #[test]
+    fn normalize_path_win_uses_forward_slashes() {
+        let t = NormalizePathWin;
+        assert_eq!(t.transform("/var/log"), "/var/log");
+        assert_eq!(t.transform(r"C:\temp\..\docs/file"), "C:/docs/file");
     }
 
     #[test]

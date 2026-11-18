@@ -4,8 +4,8 @@ use crate::error::Result;
 use crate::operators::{compile_operator, Operator};
 use crate::parser::{
     Action, Directive, FlowAction, MetadataAction, OperatorName, OperatorSpec, Parser,
-    RuleEngineMode as ParserRuleEngineMode, RuleIdSelector, Selection, UpdateTargetById,
-    VariableName, VariableSpec, XmlTarget,
+    RuleEngineMode as ParserRuleEngineMode, Selection, UpdateTargetById, VariableName,
+    VariableSpec, XmlTarget,
 };
 use crate::transformations::TransformationPipeline;
 
@@ -166,25 +166,13 @@ impl CompiledRuleset {
         // never fired -- is the failure this reporting exists to prevent.
         report_unsupported_controls(&directives);
 
-        // SecRuleRemoveById and SecRuleUpdateTargetById are applied against
-        // the whole ruleset once loading completes (like ModSecurity, where
-        // they modify already-defined rules). Removals are collected up front
-        // so removed rules are never compiled; target updates are applied
-        // after the compile loop.
-        let removals: Vec<RuleIdSelector> = directives
-            .iter()
-            .filter_map(|d| match d {
-                Directive::SecRuleRemoveById(ids) => Some(ids.iter().copied()),
-                _ => None,
-            })
-            .flatten()
-            .collect();
         let mut target_updates: Vec<UpdateTargetById> = Vec::new();
-        // When a removed rule is a chain head, its continuation rules (which
-        // usually carry no id of their own) must be dropped with it.
-        let mut skipping_removed_chain = false;
+        let excluded = excluded_rules(&directives);
 
-        for directive in directives {
+        for (index, directive) in directives.into_iter().enumerate() {
+            if excluded.get(index) == Some(&true) {
+                continue;
+            }
             match directive {
                 Directive::SecRuleEngine(mode) => {
                     ruleset.engine_mode = match mode {
@@ -205,16 +193,6 @@ impl CompiledRuleset {
                     };
                     let id = extract_id(&rule.actions);
                     let is_chain = has_chain(&rule.actions);
-
-                    if skipping_removed_chain {
-                        // Continuation of a removed chained rule.
-                        skipping_removed_chain = is_chain;
-                        continue;
-                    }
-                    if id_is_removed(&id, &removals) {
-                        skipping_removed_chain = is_chain;
-                        continue;
-                    }
 
                     let transformations = extract_transformations(&rule.actions)?;
 
@@ -345,15 +323,49 @@ fn extract_phase(actions: &[Action]) -> Phase {
     Phase::RequestBody // ModSecurity default
 }
 
-/// Check whether a rule's ID is covered by any `SecRuleRemoveById` selector.
-///
-/// Rules without an ID cannot be targeted by ID, and an ID that does not parse
-/// as a number never matches a numeric selector.
-fn id_is_removed(id: &Option<String>, removals: &[RuleIdSelector]) -> bool {
-    let Some(numeric) = id.as_ref().and_then(|s| s.parse::<u64>().ok()) else {
-        return false;
-    };
-    removals.iter().any(|selector| selector.matches(numeric))
+/// A static exclusion applies to complete logical rules declared before it.
+fn excluded_rules(directives: &[Directive]) -> Vec<bool> {
+    let mut excluded = Vec::new();
+    for (index, directive) in directives.iter().enumerate() {
+        if !matches!(
+            directive,
+            Directive::SecRuleRemoveById(_)
+                | Directive::SecRuleRemoveByTag(_)
+                | Directive::SecRuleRemoveByMsg(_)
+        ) {
+            continue;
+        }
+        excluded.resize(directives.len(), false);
+        let mut child = false;
+        let mut remove = false;
+        for (previous, excluded) in directives[..index].iter().zip(&mut excluded) {
+            let actions = match previous {
+                Directive::SecRule(rule) => &rule.actions,
+                Directive::SecAction(action) => &action.actions,
+                _ => continue,
+            };
+            if !child {
+                remove = match directive {
+                    Directive::SecRuleRemoveById(ids) => extract_id(actions)
+                        .and_then(|id| id.parse::<u64>().ok())
+                        .is_some_and(|id| ids.iter().any(|range| range.matches(id))),
+                    Directive::SecRuleRemoveByTag(tag) => actions
+                        .iter()
+                        .any(|a| matches!(a, Action::Metadata(MetadataAction::Tag(t)) if t == tag)),
+                    Directive::SecRuleRemoveByMsg(msg) => {
+                        actions.iter().rev().find_map(|a| match a {
+                            Action::Metadata(MetadataAction::Msg(m)) => Some(m),
+                            _ => None,
+                        }) == Some(msg)
+                    }
+                    _ => unreachable!(),
+                };
+            }
+            *excluded |= remove;
+            child = has_chain(actions);
+        }
+    }
+    excluded
 }
 
 /// Apply `SecRuleUpdateTargetById` directives to the compiled rules.

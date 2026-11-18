@@ -147,6 +147,8 @@ impl<'a> VariableResolver<'a> {
                     .sum();
                 vec![("ARGS_COMBINED_SIZE".to_string(), size.to_string())]
             }
+            // The raw body, always, whichever body processor ran or none.
+            // This is why ctl:forceRequestBodyVariable is accepted as a no-op.
             VariableName::RequestBody => {
                 vec![("REQUEST_BODY".to_string(), self.request.body_str())]
             }
@@ -206,6 +208,23 @@ impl<'a> VariableResolver<'a> {
             VariableName::Files => self.resolve_collection(&self.request.files, "FILES", selection),
             VariableName::FilesNames => {
                 self.resolve_collection_names(&[&self.request.files], "FILES_NAMES", selection)
+            }
+            VariableName::FilesSizes => {
+                self.resolve_collection(&self.request.files_sizes, "FILES_SIZES", selection)
+            }
+            // Always present -- "0" without uploads -- so a rule comparing the
+            // total against a limit, or against 0, finds a value, as in
+            // ModSecurity.
+            VariableName::FilesCombinedSize => vec![(
+                "FILES_COMBINED_SIZE".to_string(),
+                self.request.files_combined_size.to_string(),
+            )],
+            VariableName::UniqueId => {
+                if self.request.unique_id.is_empty() {
+                    vec![]
+                } else {
+                    vec![("UNIQUE_ID".to_string(), self.request.unique_id.clone())]
+                }
             }
             VariableName::ReqBodyProcessor => {
                 if self.request.body_processor.is_empty() {

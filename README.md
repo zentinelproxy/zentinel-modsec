@@ -207,8 +207,12 @@ does not expand entities. XPath is not supported: `XML:/*` and `XML://@*`
 (every `XML:` target in stock CRS) resolve against the flattened body, and
 richer XPath expressions are reported when the rules load.
 
-**Not implemented:** `UNIQUE_ID` and `FILES_COMBINED_SIZE`; rules that target
-only those are inert and reported at load time.
+**Transaction and uploads:** `UNIQUE_ID` is generated for each transaction
+(`Transaction::set_unique_id` replaces it with the application's own request
+ID). `FILES_SIZES` and `FILES_COMBINED_SIZE` are measured in bytes by the
+multipart processor. `REQUEST_BODY` always holds the raw body, whichever
+processor ran, so `ctl:forceRequestBodyVariable` is accepted and has nothing
+left to do.
 
 ## CRS conformance
 
@@ -221,7 +225,7 @@ naming the rule IDs that must, or must not, appear in the log for a request.
 | | |
 |---|---|
 | Corpus | CRS `main` (4.31.0-dev), pinned commit in `.github/workflows/ci.yml` |
-| Passing | **4,900 of 5,184 runnable cases (94.5%)** (`MIN_PASSING`) |
+| Passing | **4,902 of 5,184 runnable cases (94.6%)** (`MIN_PASSING`) |
 
 ```bash
 mkdir -p test-rules

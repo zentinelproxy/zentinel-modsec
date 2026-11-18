@@ -327,6 +327,9 @@ impl VariableName {
             | VariableName::MatchedVarsNames
             | VariableName::Files
             | VariableName::FilesNames
+            | VariableName::FilesSizes
+            | VariableName::FilesCombinedSize
+            | VariableName::UniqueId
             | VariableName::MultipartPartHeaders
             | VariableName::ReqBodyProcessor
             | VariableName::ReqBodyError
@@ -355,10 +358,7 @@ impl VariableName {
             | VariableName::TimeWday
             | VariableName::TimeMon
             | VariableName::TimeYear
-            | VariableName::FilesSizes
             | VariableName::FilesTmpnames
-            | VariableName::FilesCombinedSize
-            | VariableName::UniqueId
             | VariableName::InboundAnomalyScore
             | VariableName::OutboundAnomalyScore
             | VariableName::Duration

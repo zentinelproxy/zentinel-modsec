@@ -169,9 +169,11 @@ pub struct SetVarEffect {
 impl Transaction {
     /// Create a new transaction.
     pub fn new(ruleset: Arc<CompiledRuleset>, default_status: u16) -> Self {
+        let mut request = RequestData::new();
+        request.unique_id = generate_unique_id();
         Self {
             ruleset,
-            request: RequestData::new(),
+            request,
             response: ResponseData::new(),
             tx: TxCollection::new(),
             phase: Phase::RequestHeaders,
@@ -186,6 +188,28 @@ impl Transaction {
             matched_data: Vec::new(),
             setvar_effects: Vec::new(),
             record_setvar_effects: false,
+        }
+    }
+
+    /// The identifier of this transaction, backing `UNIQUE_ID`.
+    ///
+    /// Generated when the transaction is created; see
+    /// [`set_unique_id`](Self::set_unique_id) to use the embedding
+    /// application's own request ID instead.
+    pub fn unique_id(&self) -> &str {
+        &self.request.unique_id
+    }
+
+    /// Replace the generated `UNIQUE_ID` with the caller's own request ID,
+    /// so that rule logs and the application's logs share one identifier.
+    ///
+    /// Call it before processing the request: rules already evaluated have
+    /// seen the previous value. CRS derives its sampling decision from this
+    /// value (rule 901410), so it should differ between requests; an empty
+    /// `id` is ignored.
+    pub fn set_unique_id(&mut self, id: &str) {
+        if !id.is_empty() {
+            self.request.unique_id = id.to_string();
         }
     }
 
@@ -1116,6 +1140,42 @@ impl std::fmt::Debug for Transaction {
             .field("matched_rules", &self.matched_rules)
             .finish()
     }
+}
+
+/// A fresh identifier for a new transaction, backing `UNIQUE_ID`.
+///
+/// Three parts: the creation time in microseconds, so IDs stay distinct
+/// across restarts; a process-wide sequence number, so two transactions
+/// created in the same microsecond still differ; and a random part, so the
+/// value cannot be predicted. CRS hashes it to decide which requests fall
+/// inside its sampling percentage (rule 901410), and a client able to
+/// predict it could choose to fall outside the sample.
+///
+/// The random part comes from the standard library's per-process hash seed,
+/// which avoids a dependency on a random number crate for a value that does
+/// not need to be cryptographically strong.
+fn generate_unique_id() -> String {
+    use std::collections::hash_map::RandomState;
+    use std::hash::{BuildHasher, Hasher};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+    let seq = SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    let mut hasher = RandomState::new().build_hasher();
+    hasher.write_u64(seq);
+    hasher.write_u128(now.as_nanos());
+    format!(
+        "{}{:06}-{:x}-{:016x}",
+        now.as_secs(),
+        now.subsec_micros(),
+        seq,
+        hasher.finish()
+    )
 }
 
 #[cfg(test)]

@@ -74,6 +74,14 @@ pub enum CtlDirective {
     RequestBodyAccess(bool),
     /// `ctl:requestBodyProcessor=URLENCODED|MULTIPART|JSON|XML`
     RequestBodyProcessor(String),
+    /// `ctl:forceRequestBodyVariable=On|Off`
+    ///
+    /// Accepted with no effect. In ModSecurity it makes `REQUEST_BODY`
+    /// available when no body processor ran; this engine always exposes the
+    /// raw body as `REQUEST_BODY`, whichever processor ran or none, so the
+    /// directive is satisfied either way. `Off` does not hide it either:
+    /// removing an inspection target on request would only open a gap.
+    ForceRequestBodyVariable(bool),
     /// A directive this engine does not implement.
     ///
     /// Kept as a distinct variant so it can be reported rather than discarded.
@@ -184,6 +192,16 @@ impl CtlDirective {
                 }
             }
 
+            "forcerequestbodyvariable" => match value.to_ascii_lowercase().as_str() {
+                "on" => CtlDirective::ForceRequestBodyVariable(true),
+                "off" => CtlDirective::ForceRequestBodyVariable(false),
+                _ => CtlDirective::unsupported(
+                    directive,
+                    value,
+                    "forceRequestBodyVariable accepts only On or Off",
+                ),
+            },
+
             "auditengine" | "auditlogparts" => CtlDirective::unsupported(
                 directive,
                 value,
@@ -293,6 +311,8 @@ impl TransactionControls {
             }
             CtlDirective::RequestBodyAccess(on) => self.request_body_access = Some(on),
             CtlDirective::RequestBodyProcessor(p) => self.request_body_processor = Some(p),
+            // REQUEST_BODY is always populated; see the variant's docs.
+            CtlDirective::ForceRequestBodyVariable(_) => {}
             CtlDirective::Unsupported {
                 directive,
                 value,
@@ -855,7 +875,7 @@ mod tests {
             ("requestBodyProcessor", "YAML"),
             ("auditEngine", "Off"),
             ("auditLogParts", "+E"),
-            ("forceRequestBodyVariable", "On"),
+            ("forceRequestBodyVariable", "Maybe"),
         ] {
             assert!(
                 matches!(
@@ -884,6 +904,17 @@ mod tests {
                     CtlDirective::RequestBodyProcessor(_)
                 ),
                 "ctl:requestBodyProcessor={value} should be accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn force_request_body_variable_is_accepted() {
+        for (value, expected) in [("On", true), ("on", true), ("Off", false)] {
+            assert_eq!(
+                CtlDirective::parse(&ctl("forceRequestBodyVariable", value)),
+                CtlDirective::ForceRequestBodyVariable(expected),
+                "forceRequestBodyVariable={value}"
             );
         }
     }

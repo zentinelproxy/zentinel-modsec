@@ -38,6 +38,20 @@ pub struct CompiledRule {
     pub chain_next: Option<usize>,
 }
 
+impl CompiledRule {
+    /// The rule's `tag:` values, in the order they were written.
+    ///
+    /// Read from the actions rather than cached: only `ctl:ruleRemoveByTag`
+    /// and `ctl:ruleRemoveTargetByTag` need them during evaluation, and the
+    /// transaction only asks once one of those has fired.
+    pub fn tags(&self) -> impl Iterator<Item = &str> {
+        self.actions.iter().filter_map(|action| match action {
+            Action::Metadata(MetadataAction::Tag(tag)) => Some(tag.as_str()),
+            _ => None,
+        })
+    }
+}
+
 impl std::fmt::Debug for CompiledRule {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CompiledRule")

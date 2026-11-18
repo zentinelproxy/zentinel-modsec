@@ -134,3 +134,23 @@ fn capture_clears_the_slots_the_match_did_not_fill() {
     assert_eq!(tx_var(&tx, "one"), "a");
     assert_eq!(tx_var(&tx, "two"), "");
 }
+
+#[test]
+fn unsigned_literals_retain_their_spelling_for_later_rules() {
+    let tx = run(
+        r#"SecRuleEngine On
+SecAction "id:1,phase:1,pass,setvar:TX.code=007"
+SecRule TX:code "@streq 007" "id:2,phase:1,deny""#,
+        "/",
+    );
+    assert_eq!(tx_var(&tx, "code"), "007");
+    assert!(tx.has_intervention());
+}
+
+#[test]
+fn invalid_destinations_are_rejected_at_load() {
+    for spec in ["IP.score=2", "!IP.score", "TX.=2", "score=2"] {
+        let rule = format!(r#"SecAction "id:1,phase:1,pass,setvar:{spec}""#);
+        assert!(ModSecurity::from_string(&rule).is_err(), "{spec}");
+    }
+}

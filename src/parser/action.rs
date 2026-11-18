@@ -565,7 +565,7 @@ fn parse_setvar(input: &str) -> Result<SetVarSpec> {
             // Decrement
             let amount: i64 = rest.parse().unwrap_or(1);
             SetVarValue::Decrement(amount)
-        } else if let Ok(n) = val.parse::<i64>() {
+        } else if let Some(n) = val.parse::<i64>().ok().filter(|n| n.to_string() == val) {
             SetVarValue::Int(n)
         } else {
             SetVarValue::String(val.to_string())
@@ -583,12 +583,14 @@ fn parse_setvar(input: &str) -> Result<SetVarSpec> {
 
 /// Parse a variable name into collection and key.
 fn parse_var_name(input: &str) -> Result<(String, String)> {
-    if let Some(pos) = input.find('.') {
-        Ok((input[..pos].to_lowercase(), input[pos + 1..].to_string()))
-    } else {
-        // Default to tx collection
-        Ok(("tx".to_string(), input.to_string()))
+    let (collection, key) = input.split_once('.').unwrap_or(("", ""));
+    if !collection.eq_ignore_ascii_case("TX") || key.trim().is_empty() {
+        return Err(Error::InvalidActionArgument {
+            action: "setvar".into(),
+            message: "expected TX followed by a nonempty member name".into(),
+        });
     }
+    Ok(("tx".into(), key.into()))
 }
 
 /// Parse severity from string or number.

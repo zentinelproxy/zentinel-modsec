@@ -1,7 +1,7 @@
 //! Compiled ruleset for efficient rule matching.
 
 use crate::error::Result;
-use crate::operators::{compile_operator, Operator};
+use crate::operators::{compile_operator, NoMatchOperator, Operator};
 use crate::parser::{
     Action, Directive, FlowAction, MetadataAction, OperatorName, OperatorSpec, Parser,
     RuleEngineMode as ParserRuleEngineMode, RuleIdSelector, Selection, UpdateTargetById,
@@ -9,8 +9,9 @@ use crate::parser::{
 };
 use crate::transformations::TransformationPipeline;
 
+use super::operand_macro;
 use super::phase::Phase;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
 /// A parsed SecRule ready for execution.
@@ -28,6 +29,10 @@ pub struct CompiledRule {
     pub operator_spec: OperatorSpec,
     /// Whether operator is negated.
     pub operator_negated: bool,
+    /// Whether a numeric operator's argument holds a macro the engine cannot
+    /// resolve. `operator` then never matches and the argument is not
+    /// expanded. Decided at load time, so evaluation only tests this flag.
+    pub operand_unresolvable: bool,
     /// Transformation pipeline.
     pub transformations: TransformationPipeline,
     /// Actions to execute on match.
@@ -173,6 +178,7 @@ impl CompiledRuleset {
         // applied after the compile loop.
         let excluded = excluded_rules(&directives);
         let mut target_updates: Vec<UpdateTargetById> = Vec::new();
+        let mut unresolvable_operands: BTreeMap<String, usize> = BTreeMap::new();
 
         for (directive, excluded) in directives.into_iter().zip(excluded) {
             if excluded {
@@ -204,8 +210,17 @@ impl CompiledRuleset {
                     report_unimplemented_variables(&rule.variables, &id);
 
                     let operator_spec = rule.operator.clone();
-                    let (operator, operator_negated) =
-                        compile_operator_reporting(&rule.operator, &id)?;
+                    let operand_unresolvable =
+                        note_unresolvable_operand(&rule.operator, &mut unresolvable_operands);
+                    let (operator, operator_negated) = if operand_unresolvable {
+                        // Negation is kept: before numeric operators read an
+                        // empty argument as 0 this operand was never compared,
+                        // so `!@gt %{env.x}` matched, and it still does.
+                        let never: Arc<dyn Operator> = Arc::new(NoMatchOperator);
+                        (never, rule.operator.negated)
+                    } else {
+                        compile_operator_reporting(&rule.operator, &id)?
+                    };
 
                     let compiled = CompiledRule {
                         id,
@@ -213,6 +228,7 @@ impl CompiledRuleset {
                         variables: rule.variables,
                         operator,
                         operator_negated,
+                        operand_unresolvable,
                         operator_spec,
                         transformations,
                         actions: rule.actions,
@@ -262,6 +278,7 @@ impl CompiledRuleset {
                         variables: vec![],
                         operator,
                         operator_negated: false,
+                        operand_unresolvable: false,
                         operator_spec,
                         transformations,
                         actions: sec_action.actions,
@@ -287,6 +304,7 @@ impl CompiledRuleset {
         }
 
         apply_target_updates(&mut ruleset, &target_updates);
+        report_unresolvable_operands(&unresolvable_operands);
 
         Ok(ruleset)
     }
@@ -548,6 +566,44 @@ fn compile_operator_reporting(
             Ok((never, false))
         }
         Err(e) => Err(e),
+    }
+}
+
+/// Whether a numeric operator's argument holds a macro on a collection the
+/// engine cannot resolve, counting each such macro in `seen`.
+///
+/// libmodsecurity would resolve the macro. Here it expands to an empty string,
+/// which a numeric operator reads as 0: `@gt %{env.MAX_LEN}` would compare
+/// against a limit of 0 and match every non-empty value. The rule is left
+/// unable to match instead, and [`report_unresolvable_operands`] says so.
+///
+/// A macro that can be resolved but has no value (`%{tx.unset}`) is not this
+/// case: it is 0 in libmodsecurity too.
+fn note_unresolvable_operand(spec: &OperatorSpec, seen: &mut BTreeMap<String, usize>) -> bool {
+    if !spec.name.reads_argument_as_integer() {
+        return false;
+    }
+    // A set, so a rule naming one macro twice is counted once.
+    let macros: BTreeSet<&str> = operand_macro::unresolvable(&spec.argument).collect();
+    for written in &macros {
+        *seen.entry(written.to_string()).or_default() += 1;
+    }
+    !macros.is_empty()
+}
+
+/// Warn once per distinct macro that left a numeric operator unable to match.
+///
+/// Deduplicated by the macro as written, with the number of rules using it,
+/// like [`report_unsupported_controls`]: a ruleset that reads one limit from
+/// `%{env.MAX_LEN}` in many rules has one thing to fix.
+fn report_unresolvable_operands(seen: &BTreeMap<String, usize>) {
+    for (operand, count) in seen {
+        tracing::warn!(
+            macro = %operand,
+            rules_affected = count,
+            "numeric operator argument uses a macro on a collection this \
+             engine cannot resolve; the operator will never match"
+        );
     }
 }
 

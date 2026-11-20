@@ -197,6 +197,13 @@ impl OperatorName {
                 | Self::GeoLookup
         )
     }
+
+    /// Whether this operator converts its argument to an integer (`@eq`,
+    /// `@gt`, `@ge`, `@lt`, `@le`), so that an empty argument reads as 0.
+    #[inline]
+    pub fn reads_argument_as_integer(&self) -> bool {
+        matches!(self, Self::Eq | Self::Gt | Self::Ge | Self::Lt | Self::Le)
+    }
 }
 
 /// Parse an operator specification from a string.

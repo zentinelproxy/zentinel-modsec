@@ -12,7 +12,16 @@
 //! match. `SecRule ... "!@eq 0"`, the form the recommended configuration uses
 //! for its request body checks (200002, 200003), then denied a request whose
 //! value was empty.
+//!
+//! The one operand that is still not compared is a macro on a collection the
+//! engine cannot resolve (`%{env.MAX_LEN}`). libmodsecurity would resolve it;
+//! here it expands to nothing, and reading that as 0 would compare against a
+//! limit nobody wrote. Such a rule keeps reporting no match and is named in a
+//! warning when the ruleset loads.
 
+use std::io;
+use std::sync::{Arc, Mutex};
+use tracing_subscriber::fmt::MakeWriter;
 use zentinel_modsec::operators::{
     EqOperator, GeOperator, GtOperator, LeOperator, LtOperator, Operator,
 };
@@ -146,4 +155,147 @@ SecRule ARGS:size "@gt 1048576" "id:1,phase:2,deny,status:413"
         Some("1")
     );
     assert_eq!(denied_by(rules, "/?size=1048576"), None);
+}
+
+const OPERATORS: [&str; 5] = ["eq", "gt", "lt", "ge", "le"];
+
+/// One rule comparing `ARGS:size` with `operator`, e.g. `!@gt %{env.MAX_LEN}`.
+fn size_rule(operator: &str) -> String {
+    format!("SecRuleEngine On\nSecRule ARGS:size \"{operator}\" \"id:1,phase:2,deny,status:413\"\n")
+}
+
+#[test]
+fn a_macro_the_engine_cannot_resolve_never_matches() {
+    let rules = size_rule("@gt %{env.MAX_LEN}");
+    assert_eq!(denied_by(&rules, "/?size=5"), None);
+
+    for collection in ["env", "ip", "session", "global", "ENV"] {
+        for operator in OPERATORS {
+            let rules = size_rule(&format!("@{operator} %{{{collection}.x}}"));
+            for uri in ["/?size=-5", "/?size=0", "/?size=5", "/?size="] {
+                assert_eq!(
+                    denied_by(&rules, uri),
+                    None,
+                    "{collection} {operator} {uri}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_negated_comparison_with_an_unresolvable_macro_always_matches() {
+    for collection in ["env", "ip", "session", "global"] {
+        for operator in OPERATORS {
+            let rules = size_rule(&format!("!@{operator} %{{{collection}.x}}"));
+            for uri in ["/?size=-5", "/?size=0", "/?size=5", "/?size="] {
+                assert_eq!(
+                    denied_by(&rules, uri).as_deref(),
+                    Some("1"),
+                    "{collection} {operator} {uri}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn one_unresolvable_macro_is_enough_to_leave_the_operand_uncompared() {
+    let rules = "SecRuleEngine On\n\
+        SecAction \"id:1,phase:1,pass,nolog,setvar:tx.base=1\"\n\
+        SecRule ARGS:size \"@gt %{tx.base}%{env.SUFFIX}\" \"id:2,phase:2,deny,status:413\"\n";
+    assert_eq!(denied_by(rules, "/?size=5"), None);
+}
+
+#[test]
+fn a_resolvable_macro_without_a_value_compares_as_zero() {
+    for (operator, uri) in [
+        ("@eq %{tx.unset}", "/?size=0"),
+        ("@eq %{tx.unset}", "/?size="),
+        ("@gt %{tx.unset}", "/?size=5"),
+        ("@lt %{tx.unset}", "/?size=-5"),
+        ("@ge %{tx.unset}", "/?size=0"),
+        ("@le %{tx.unset}", "/?size=0"),
+        ("@gt %{request_headers.x-count}", "/?size=5"),
+        ("@gt %{request_headers.absent}", "/?size=5"),
+    ] {
+        assert_eq!(
+            denied_by(&size_rule(operator), uri).as_deref(),
+            Some("1"),
+            "{operator} {uri}"
+        );
+    }
+    assert_eq!(denied_by(&size_rule("@gt %{tx.unset}"), "/?size=0"), None);
+}
+
+/// Collects formatted log output so a test can assert on load-time warnings.
+#[derive(Clone, Default)]
+struct LogBuffer(Arc<Mutex<Vec<u8>>>);
+
+impl io::Write for LogBuffer {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+impl MakeWriter<'_> for LogBuffer {
+    type Writer = Self;
+
+    fn make_writer(&self) -> Self {
+        self.clone()
+    }
+}
+
+/// The warnings logged while `rules` load, one per line.
+fn load_warnings(rules: &str) -> Vec<String> {
+    let log = LogBuffer::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(log.clone())
+        .with_ansi(false)
+        .finish();
+    tracing::subscriber::with_default(subscriber, || ModSecurity::from_string(rules))
+        .expect("rules should load");
+    let log = String::from_utf8(log.0.lock().unwrap().clone()).unwrap();
+    log.lines()
+        .filter(|line| line.contains("WARN"))
+        .map(str::to_string)
+        .collect()
+}
+
+#[test]
+fn an_unresolvable_macro_is_reported_once_when_the_rules_load() {
+    let warnings = load_warnings(
+        r#"SecRuleEngine On
+SecRule REQUEST_HEADERS:Content-Length "@gt %{env.MAX_LEN}" "id:1,phase:1,deny"
+SecRule ARGS:size "!@le %{env.MAX_LEN}" "id:2,phase:2,deny"
+SecRule ARGS:size "@eq %{ip.count}" "id:3,phase:2,deny"
+SecRule ARGS:size "@ge %{tx.limit}" "id:4,phase:2,deny"
+SecRule ARGS:name "@streq %{session.name}" "id:5,phase:2,deny"
+"#,
+    );
+    assert_eq!(warnings.len(), 2, "{warnings:#?}");
+    assert!(warnings[0].contains("%{env.MAX_LEN}"), "{warnings:#?}");
+    assert!(warnings[0].contains("rules_affected=2"), "{warnings:#?}");
+    assert!(warnings[1].contains("%{ip.count}"), "{warnings:#?}");
+    assert!(warnings[1].contains("rules_affected=1"), "{warnings:#?}");
+    for warning in &warnings {
+        assert!(warning.contains("will never match"), "{warning}");
+    }
+}
+
+#[test]
+fn resolvable_macros_load_without_a_warning() {
+    let warnings = load_warnings(
+        r#"SecRuleEngine On
+SecRule ARGS:size "@gt %{tx.limit}" "id:1,phase:2,deny"
+SecRule ARGS:size "@eq %{request_headers.x-count}" "id:2,phase:2,deny"
+SecRule ARGS:size "@ge %{MATCHED_VAR}" "id:3,phase:2,deny"
+"#,
+    );
+    assert!(warnings.is_empty(), "{warnings:#?}");
 }

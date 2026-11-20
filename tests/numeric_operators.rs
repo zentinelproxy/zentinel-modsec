@@ -19,9 +19,8 @@
 //! limit nobody wrote. Such a rule keeps reporting no match and is named in a
 //! warning when the ruleset loads.
 
-use std::io;
-use std::sync::{Arc, Mutex};
-use tracing_subscriber::fmt::MakeWriter;
+mod common;
+
 use zentinel_modsec::operators::{
     EqOperator, GeOperator, GtOperator, LeOperator, LtOperator, Operator,
 };
@@ -228,39 +227,10 @@ fn a_resolvable_macro_without_a_value_compares_as_zero() {
     assert_eq!(denied_by(&size_rule("@gt %{tx.unset}"), "/?size=0"), None);
 }
 
-/// Collects formatted log output so a test can assert on load-time warnings.
-#[derive(Clone, Default)]
-struct LogBuffer(Arc<Mutex<Vec<u8>>>);
-
-impl io::Write for LogBuffer {
-    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        self.0.lock().unwrap().extend_from_slice(bytes);
-        Ok(bytes.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
-impl MakeWriter<'_> for LogBuffer {
-    type Writer = Self;
-
-    fn make_writer(&self) -> Self {
-        self.clone()
-    }
-}
-
 /// The warnings logged while `rules` load, one per line.
 fn load_warnings(rules: &str) -> Vec<String> {
-    let log = LogBuffer::default();
-    let subscriber = tracing_subscriber::fmt()
-        .with_writer(log.clone())
-        .with_ansi(false)
-        .finish();
-    tracing::subscriber::with_default(subscriber, || ModSecurity::from_string(rules))
-        .expect("rules should load");
-    let log = String::from_utf8(log.0.lock().unwrap().clone()).unwrap();
+    let (loaded, log) = common::capture_log(|| ModSecurity::from_string(rules));
+    loaded.expect("rules should load");
     log.lines()
         .filter(|line| line.contains("WARN"))
         .map(str::to_string)

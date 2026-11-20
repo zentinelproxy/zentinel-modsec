@@ -204,9 +204,17 @@ impl Transaction {
     /// so that rule logs and the application's logs share one identifier.
     ///
     /// Call it before processing the request: rules already evaluated have
-    /// seen the previous value. CRS derives its sampling decision from this
-    /// value (rule 901410), so it should differ between requests; an empty
-    /// `id` is ignored.
+    /// seen the previous value. An empty `id` is ignored.
+    ///
+    /// # Security
+    ///
+    /// The ID must not be under the client's control: do not pass a request
+    /// header such as `X-Request-ID` taken as received. CRS derives its
+    /// sampling decision from `UNIQUE_ID` (rule 901410), so with
+    /// `tx.sampling_percentage` below 100 a client that chooses the ID can
+    /// pick values that fall outside the sample and skip the CRS entirely.
+    /// Use an ID the application or proxy generated itself, and that differs
+    /// between requests.
     pub fn set_unique_id(&mut self, id: &str) {
         if !id.is_empty() {
             self.request.unique_id = id.to_string();
@@ -822,12 +830,8 @@ impl Transaction {
         // are hoisted so rules with no exclusion -- effectively all of them --
         // pay one comparison rather than a scan per variable.
         let filter_by_id = self.controls.has_target_removals(rule.id.as_deref());
-        let tag_targets = if self.controls.has_tag_target_removals() {
-            self.controls.targets_removed_by_tag(rule.tags())
-        } else {
-            Vec::new()
-        };
-        let filter_targets = filter_by_id || !tag_targets.is_empty();
+        let filter_by_tag = self.controls.has_tag_target_removals(rule.tags());
+        let filter_targets = filter_by_id || filter_by_tag;
 
         let mut all_values = Vec::new();
         let mut any_excluded = false;
@@ -840,7 +844,10 @@ impl Transaction {
                         && self
                             .controls
                             .is_target_removed(rule.id.as_deref(), spec, name))
-                        && !TransactionControls::is_value_excluded(&tag_targets, spec, name)
+                        && !(filter_by_tag
+                            && self
+                                .controls
+                                .is_target_removed_by_tag(rule.tags(), spec, name))
                 });
                 any_excluded |= resolved.len() != before;
             }

@@ -392,32 +392,41 @@ impl TransactionControls {
             .any(|tag| self.removed_tags.iter().any(|t| t == tag))
     }
 
-    /// Whether any `ctl:ruleRemoveTargetByTag` exclusion is active.
+    /// Whether any `ctl:ruleRemoveTargetByTag` exclusion applies to a rule
+    /// carrying these tags.
     ///
-    /// Lets the caller skip collecting a rule's tags when, as for almost every
-    /// transaction, there is nothing to match them against.
-    pub fn has_tag_target_removals(&self) -> bool {
-        !self.removed_targets_by_tag.is_empty()
-    }
-
-    /// Targets excluded from a rule carrying these tags by
-    /// `ctl:ruleRemoveTargetByTag`.
-    ///
-    /// Resolved once per rule evaluation, so the per-value filter only walks
-    /// the exclusions that actually apply to the rule.
-    pub fn targets_removed_by_tag<'a, 's>(
-        &'s self,
-        rule_tags: impl IntoIterator<Item = &'a str>,
-    ) -> Vec<&'s VariableSpec> {
-        if self.removed_targets_by_tag.is_empty() {
-            return Vec::new();
-        }
-        let rule_tags: Vec<&str> = rule_tags.into_iter().collect();
+    /// Checked once per rule before the per-value filter. CRS 941010 activates
+    /// an exclusion on almost every request, so this path runs for every rule
+    /// of those transactions and allocates nothing: it walks the (short) list
+    /// of exclusions and the rule's tags in place.
+    pub fn has_tag_target_removals<'a, T>(&self, rule_tags: T) -> bool
+    where
+        T: IntoIterator<Item = &'a str> + Clone,
+    {
         self.removed_targets_by_tag
             .iter()
-            .filter(|(tag, _, _)| rule_tags.contains(&tag.as_str()))
-            .map(|(_, _, target)| target)
-            .collect()
+            .any(|(tag, _, _)| has_tag(rule_tags.clone(), tag))
+    }
+
+    /// Whether one resolved value was excluded from a rule carrying these tags
+    /// by `ctl:ruleRemoveTargetByTag`.
+    ///
+    /// Same value-level semantics as
+    /// [`is_target_removed`](Self::is_target_removed), and allocation-free for
+    /// the same reason as
+    /// [`has_tag_target_removals`](Self::has_tag_target_removals).
+    pub fn is_target_removed_by_tag<'a, T>(
+        &self,
+        rule_tags: T,
+        var: &VariableSpec,
+        resolved_name: &str,
+    ) -> bool
+    where
+        T: IntoIterator<Item = &'a str> + Clone,
+    {
+        self.removed_targets_by_tag.iter().any(|(tag, _, target)| {
+            target_matches_resolved(var, target, resolved_name) && has_tag(rule_tags.clone(), tag)
+        })
     }
 
     /// Whether any target exclusion applies to this rule.
@@ -464,18 +473,6 @@ impl TransactionControls {
             .any(|(r, target)| r == id && target_matches_resolved(var, target, resolved_name))
     }
 
-    /// Whether one resolved value falls under any of `targets`, as returned by
-    /// [`targets_removed_by_tag`](Self::targets_removed_by_tag).
-    pub fn is_value_excluded(
-        targets: &[&VariableSpec],
-        var: &VariableSpec,
-        resolved_name: &str,
-    ) -> bool {
-        targets
-            .iter()
-            .any(|target| target_matches_resolved(var, target, resolved_name))
-    }
-
     /// Whether the request body should be parsed at all.
     pub fn request_body_access(&self) -> bool {
         self.request_body_access.unwrap_or(true)
@@ -485,6 +482,11 @@ impl TransactionControls {
     pub fn request_body_processor(&self) -> Option<&str> {
         self.request_body_processor.as_deref()
     }
+}
+
+/// Whether a rule carrying `rule_tags` carries `tag`, compared exactly.
+fn has_tag<'a>(rule_tags: impl IntoIterator<Item = &'a str>, tag: &str) -> bool {
+    rule_tags.into_iter().any(|t| t == tag)
 }
 
 /// Whether a resolved value falls under the target named by a `ctl:` argument
@@ -835,7 +837,7 @@ mod tests {
     #[test]
     fn tag_target_removal_applies_only_to_rules_with_the_tag() {
         let mut controls = TransactionControls::default();
-        assert!(!controls.has_tag_target_removals());
+        assert!(!controls.has_tag_target_removals(["xss-perf-disable"]));
 
         controls.apply(CtlDirective::parse(&ctl(
             "ruleRemoveTargetByTag",
@@ -846,25 +848,18 @@ mod tests {
             "ruleRemoveTargetByTag",
             "xss-perf-disable;REQUEST_FILENAME",
         )));
-        assert!(controls.has_tag_target_removals());
+        assert_eq!(controls.removed_targets_by_tag.len(), 1);
 
-        let targets = controls.targets_removed_by_tag(["attack-xss", "xss-perf-disable"]);
-        assert_eq!(targets.len(), 1);
+        let xss = ["attack-xss", "xss-perf-disable"];
+        let sqli = ["attack-sqli"];
+        assert!(controls.has_tag_target_removals(xss));
+        assert!(!controls.has_tag_target_removals(sqli));
 
         let filename = crate::parser::parse_single_variable("REQUEST_FILENAME").unwrap();
         let uri = crate::parser::parse_single_variable("REQUEST_URI").unwrap();
-        assert!(TransactionControls::is_value_excluded(
-            &targets,
-            &filename,
-            "REQUEST_FILENAME"
-        ));
-        assert!(!TransactionControls::is_value_excluded(
-            &targets,
-            &uri,
-            "REQUEST_URI"
-        ));
-
-        assert!(controls.targets_removed_by_tag(["attack-sqli"]).is_empty());
+        assert!(controls.is_target_removed_by_tag(xss, &filename, "REQUEST_FILENAME"));
+        assert!(!controls.is_target_removed_by_tag(xss, &uri, "REQUEST_URI"));
+        assert!(!controls.is_target_removed_by_tag(sqli, &filename, "REQUEST_FILENAME"));
     }
 
     #[test]

@@ -44,7 +44,7 @@ impl CompiledRule {
     /// Read from the actions rather than cached: only `ctl:ruleRemoveByTag`
     /// and `ctl:ruleRemoveTargetByTag` need them during evaluation, and the
     /// transaction only asks once one of those has fired.
-    pub fn tags(&self) -> impl Iterator<Item = &str> {
+    pub fn tags(&self) -> impl Iterator<Item = &str> + Clone {
         self.actions.iter().filter_map(|action| match action {
             Action::Metadata(MetadataAction::Tag(tag)) => Some(tag.as_str()),
             _ => None,

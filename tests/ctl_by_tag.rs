@@ -148,3 +148,36 @@ fn remove_target_by_tag_does_not_fire_for_a_suspicious_path() {
     // 941100 keeps inspecting REQUEST_FILENAME.
     assert!(blocked(XSS_PERF, "/abc%3C.html"));
 }
+
+// ---------------------------------------------------------------------------
+// Tag- and ID-based target exclusions together
+// ---------------------------------------------------------------------------
+
+/// One rule over `ARGS`, with `ARGS:foo` excluded by tag and `ARGS:bar` by ID.
+/// A second rule shares the tag but not the ID.
+const BY_TAG_AND_ID: &str = r#"
+SecRuleEngine On
+SecAction "id:1,phase:1,pass,nolog,ctl:ruleRemoveTargetByTag=attack-sqli;ARGS:foo,ctl:ruleRemoveTargetById=100;ARGS:bar"
+SecRule ARGS "@contains attack" "id:100,phase:2,deny,tag:'attack-sqli'"
+SecRule ARGS "@contains attack" "id:200,phase:2,pass,tag:'attack-sqli'"
+"#;
+
+#[test]
+fn keyed_tag_and_id_exclusions_combine_on_the_same_rule() {
+    // Each exclusion removes its own member, and only that member.
+    assert!(!blocked(BY_TAG_AND_ID, "/?foo=attack"));
+    assert!(!blocked(BY_TAG_AND_ID, "/?bar=attack"));
+    assert!(!blocked(BY_TAG_AND_ID, "/?foo=attack&bar=attack"));
+    assert!(blocked(BY_TAG_AND_ID, "/?baz=attack"));
+    assert!(blocked(BY_TAG_AND_ID, "/?foo=attack&baz=attack"));
+}
+
+#[test]
+fn a_keyed_tag_exclusion_does_not_borrow_the_id_exclusion() {
+    // Rule 200 carries the tag but not ID 100: ARGS:foo is excluded from it,
+    // ARGS:bar is not.
+    let matched = matched_rules(BY_TAG_AND_ID, "/?foo=attack");
+    assert!(!matched.contains(&"200".to_string()), "{matched:?}");
+    let matched = matched_rules(BY_TAG_AND_ID, "/?bar=attack");
+    assert!(matched.contains(&"200".to_string()), "{matched:?}");
+}

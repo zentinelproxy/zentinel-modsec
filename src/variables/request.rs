@@ -670,24 +670,24 @@ fn push_json_arg(
 }
 
 /// Split `haystack` on every occurrence of `needle`, like `str::split`.
+///
+/// Uses `memchr::memmem`, which stays fast on multi-megabyte uploads where a
+/// byte-by-byte window comparison does not.
 fn split_bytes<'a>(haystack: &'a [u8], needle: &[u8]) -> Vec<&'a [u8]> {
     let mut parts = Vec::new();
-    let mut rest = haystack;
-    while let Some((before, after)) = split_once_bytes(rest, needle) {
-        parts.push(before);
-        rest = after;
+    let mut start = 0;
+    for pos in memchr::memmem::find_iter(haystack, needle) {
+        parts.push(&haystack[start..pos]);
+        start = pos + needle.len();
     }
-    parts.push(rest);
+    parts.push(&haystack[start..]);
     parts
 }
 
 /// Split `haystack` around the first occurrence of `needle`, like
 /// `str::split_once`.
 fn split_once_bytes<'a>(haystack: &'a [u8], needle: &[u8]) -> Option<(&'a [u8], &'a [u8])> {
-    if needle.is_empty() || haystack.len() < needle.len() {
-        return None;
-    }
-    let pos = haystack.windows(needle.len()).position(|w| w == needle)?;
+    let pos = memchr::memmem::find(haystack, needle)?;
     Some((&haystack[..pos], &haystack[pos + needle.len()..]))
 }
 

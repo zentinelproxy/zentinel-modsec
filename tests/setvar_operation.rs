@@ -13,7 +13,7 @@
 //! afterwards, so a captured `-7` turned `setvar:tx.x=%{tx.0}` into a
 //! decrement.
 
-use std::sync::{Arc, Mutex};
+mod common;
 
 use zentinel_modsec::engine::Transaction;
 use zentinel_modsec::ModSecurity;
@@ -151,30 +151,8 @@ SecRule TX:code "@streq 007" "id:2,phase:1,deny""#,
 
 /// Load `rules` and return them with every warning the load logged.
 fn load_capturing_warnings(rules: &str) -> (ModSecurity, String) {
-    let log = Arc::new(Mutex::new(Vec::new()));
-    let writer = Arc::clone(&log);
-    let subscriber = tracing_subscriber::fmt()
-        .with_ansi(false)
-        .with_writer(move || LogWriter(Arc::clone(&writer)))
-        .finish();
-    let msc = tracing::subscriber::with_default(subscriber, || {
-        ModSecurity::from_string(rules).expect("rules should load")
-    });
-    let logged = String::from_utf8(log.lock().unwrap().clone()).unwrap();
-    (msc, logged)
-}
-
-struct LogWriter(Arc<Mutex<Vec<u8>>>);
-
-impl std::io::Write for LogWriter {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.0.lock().unwrap().extend_from_slice(buf);
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
+    let (loaded, logged) = common::capture_log(|| ModSecurity::from_string(rules));
+    (loaded.expect("rules should load"), logged)
 }
 
 const UNSUPPORTED_COLLECTION_WARNING: &str =

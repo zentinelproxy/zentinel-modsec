@@ -37,12 +37,22 @@ fn is_line_terminator(c: char) -> bool {
     matches!(c, '\n' | '\u{85}' | '\u{2028}' | '\u{2029}')
 }
 
+/// Whether ModSecurity v3 accepts `c` between tokens or as part of a line
+/// end. Its scanner knows space and tab as whitespace and `\n` or `\r\n` as a
+/// line end, nothing else.
+fn is_modsecurity_separator(c: char) -> bool {
+    matches!(c, ' ' | '\t' | '\r' | '\n')
+}
+
 /// Lexer for ModSecurity configuration.
 pub struct Lexer<'a> {
     input: Peekable<Chars<'a>>,
     line: usize,
     column: usize,
     at_line_start: bool,
+    /// Separators ModSecurity v3 rejects that have been warned about, so
+    /// that each one is reported once per input.
+    reported_separators: Vec<char>,
 }
 
 impl<'a> Lexer<'a> {
@@ -53,6 +63,7 @@ impl<'a> Lexer<'a> {
             line: 1,
             column: 1,
             at_line_start: true,
+            reported_separators: Vec::new(),
         }
     }
 
@@ -79,6 +90,26 @@ impl<'a> Lexer<'a> {
         c
     }
 
+    /// Consume a character that separates tokens or ends a line. One that
+    /// ModSecurity v3 does not accept there is reported, at its first
+    /// occurrence, so that a configuration which only loads here does not
+    /// pass silently.
+    fn advance_separator(&mut self) {
+        let (line, column) = (self.line, self.column);
+        if let Some(c) = self.advance() {
+            if !is_modsecurity_separator(c) && !self.reported_separators.contains(&c) {
+                self.reported_separators.push(c);
+                tracing::warn!(
+                    line,
+                    column,
+                    character = %format_args!("U+{:04X}", u32::from(c)),
+                    "ModSecurity v3 does not accept this character as whitespace or a line end; \
+                     further occurrences are not reported"
+                );
+            }
+        }
+    }
+
     /// Skip whitespace (but not newlines), including backslash-newline continuations.
     pub fn skip_whitespace(&mut self) {
         loop {
@@ -88,7 +119,7 @@ impl<'a> Lexer<'a> {
                 // token stream ends at it and silently drops every directive
                 // after it. Line terminators are left for next_token.
                 Some(&c) if c.is_whitespace() && !is_line_terminator(c) => {
-                    self.advance();
+                    self.advance_separator();
                 }
                 Some(&'\\') => {
                     // Check for line continuation
@@ -139,7 +170,7 @@ impl<'a> Lexer<'a> {
 
         match self.peek()? {
             c if is_line_terminator(c) => {
-                self.advance();
+                self.advance_separator();
                 Some(Token {
                     kind: TokenKind::Newline,
                     line,
@@ -148,10 +179,12 @@ impl<'a> Lexer<'a> {
             }
             '#' => {
                 // Comment - skip to end of line
-                while let Some(c) = self.advance() {
-                    if c == '\n' {
+                while let Some(c) = self.peek() {
+                    if is_line_terminator(c) {
+                        self.advance_separator();
                         break;
                     }
+                    self.advance();
                 }
                 Some(Token {
                     kind: TokenKind::Comment,

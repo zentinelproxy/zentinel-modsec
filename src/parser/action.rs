@@ -583,14 +583,12 @@ fn parse_setvar(input: &str) -> Result<SetVarSpec> {
 
 /// Parse a variable name into collection and key.
 fn parse_var_name(input: &str) -> Result<(String, String)> {
-    let (collection, key) = input.split_once('.').unwrap_or(("", ""));
-    if !collection.eq_ignore_ascii_case("TX") || key.trim().is_empty() {
-        return Err(Error::InvalidActionArgument {
-            action: "setvar".into(),
-            message: "expected TX followed by a nonempty member name".into(),
-        });
+    if let Some(pos) = input.find('.') {
+        Ok((input[..pos].to_lowercase(), input[pos + 1..].to_string()))
+    } else {
+        // Default to tx collection
+        Ok(("tx".to_string(), input.to_string()))
     }
-    Ok(("tx".into(), key.into()))
 }
 
 /// Parse severity from string or number.

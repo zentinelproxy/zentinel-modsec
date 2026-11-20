@@ -2,8 +2,7 @@
 //! configuration: every rule after it was dropped without an error. A stray
 //! backslash has always been ignored and must stay that way.
 
-use std::io;
-use std::sync::{Arc, Mutex};
+mod common;
 
 use zentinel_modsec::ModSecurity;
 
@@ -42,34 +41,11 @@ fn unicode_line_terminators_end_a_comment() {
     }
 }
 
-/// Log output shared between a subscriber and the test that reads it back.
-#[derive(Clone, Default)]
-struct CapturedLog(Arc<Mutex<Vec<u8>>>);
-
-impl io::Write for CapturedLog {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0.lock().unwrap().extend_from_slice(buf);
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
 /// Loads `rules` and returns the warnings logged while doing so.
 fn load_warnings(rules: &str) -> String {
-    let log = CapturedLog::default();
-    let writer = log.clone();
-    let subscriber = tracing_subscriber::fmt()
-        .with_ansi(false)
-        .with_writer(move || writer.clone())
-        .finish();
-    tracing::subscriber::with_default(subscriber, || {
-        ModSecurity::from_string(rules).expect("rules should load");
-    });
-    let bytes = log.0.lock().unwrap().clone();
-    String::from_utf8(bytes).unwrap()
+    let (loaded, log) = common::capture_log(|| ModSecurity::from_string(rules));
+    loaded.expect("rules should load");
+    log
 }
 
 #[test]

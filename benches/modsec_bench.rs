@@ -3,6 +3,9 @@
 //! Run with: cargo bench
 //! Compare with libmodsecurity: cargo bench --features libmodsec-compare
 
+#[path = "modsec_bench/full_crs.rs"]
+mod full_crs;
+
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use std::time::Duration;
 use zentinel_modsec::ModSecurity;
@@ -537,6 +540,7 @@ criterion_group!(
     benches,
     bench_rule_parsing,
     bench_crs_parsing,
+    full_crs::requests,
     bench_transaction_processing,
     bench_body_processing,
     bench_operators,

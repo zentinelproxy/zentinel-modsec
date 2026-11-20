@@ -251,15 +251,7 @@ pub struct NormalizePathWin;
 
 impl Transformation for NormalizePathWin {
     fn transform<'a>(&self, input: &'a str) -> Cow<'a, str> {
-        // Same as NormalizePath but preserves backslashes
-        let np = NormalizePath;
-        let result = np.transform(input);
-        // Convert back to backslashes
-        if result.contains('/') {
-            Cow::Owned(result.replace('/', "\\"))
-        } else {
-            result
-        }
+        NormalizePath.transform(input)
     }
 
     fn name(&self) -> &'static str {
@@ -411,13 +403,24 @@ impl Transformation for SqlHexDecode {
     }
 }
 
-/// UTF-8 to Unicode transformation (pass-through for now).
+/// Serialize non-ASCII code points as IIS-style %u escapes.
 pub struct Utf8ToUnicode;
 
 impl Transformation for Utf8ToUnicode {
     fn transform<'a>(&self, input: &'a str) -> Cow<'a, str> {
-        // In Rust strings are already UTF-8, this is a no-op
-        Cow::Borrowed(input)
+        if input.is_ascii() {
+            return Cow::Borrowed(input);
+        }
+        use std::fmt::Write;
+        let mut result = String::with_capacity(input.len());
+        for c in input.chars() {
+            if c.is_ascii() {
+                result.push(c);
+            } else {
+                write!(&mut result, "%u{:04x}", c as u32).expect("writing to a String");
+            }
+        }
+        Cow::Owned(result)
     }
 
     fn name(&self) -> &'static str {
@@ -605,6 +608,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn utf8_to_unicode_encodes_non_ascii_code_points() {
+        let t = Utf8ToUnicode;
+        assert_eq!(t.transform("École Ａ 🍺"), "%u00c9cole %uff21 %u1f37a");
+        assert!(matches!(t.transform("ASCII%20\0"), Cow::Borrowed(_)));
+    }
+
+    #[test]
     fn test_lowercase() {
         let t = Lowercase;
         assert_eq!(t.transform("Hello World"), "hello world");
@@ -630,6 +640,13 @@ mod tests {
         assert_eq!(t.transform("/a/b/../c"), "/a/c");
         assert_eq!(t.transform("/a//b/./c"), "/a/b/c");
         assert_eq!(t.transform("a\\b\\c"), "a/b/c");
+    }
+
+    #[test]
+    fn normalize_path_win_uses_forward_slashes() {
+        let t = NormalizePathWin;
+        assert_eq!(t.transform("/var/log"), "/var/log");
+        assert_eq!(t.transform(r"C:\temp\..\docs/file"), "C:/docs/file");
     }
 
     #[test]

@@ -470,8 +470,9 @@ impl Transaction {
             return Ok(());
         }
 
-        // Clone rules to avoid borrow conflicts with mutable self
-        let rules: Vec<CompiledRule> = self.ruleset.rules_for_phase(phase).to_vec();
+        // Keep the immutable ruleset alive independently of mutable transaction state.
+        let ruleset = Arc::clone(&self.ruleset);
+        let rules = ruleset.rules_for_phase(phase);
         if rules.is_empty() {
             return Ok(());
         }

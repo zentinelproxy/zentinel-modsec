@@ -4,8 +4,8 @@ use crate::error::Result;
 use crate::operators::{compile_operator, Operator};
 use crate::parser::{
     Action, Directive, FlowAction, MetadataAction, OperatorName, OperatorSpec, Parser,
-    RuleEngineMode as ParserRuleEngineMode, Selection, UpdateTargetById, VariableName,
-    VariableSpec, XmlTarget,
+    RuleEngineMode as ParserRuleEngineMode, RuleIdSelector, Selection, UpdateTargetById,
+    VariableName, VariableSpec, XmlTarget,
 };
 use crate::transformations::TransformationPipeline;
 
@@ -166,11 +166,16 @@ impl CompiledRuleset {
         // never fired -- is the failure this reporting exists to prevent.
         report_unsupported_controls(&directives);
 
-        let mut target_updates: Vec<UpdateTargetById> = Vec::new();
+        // Static removals and SecRuleUpdateTargetById are applied against the
+        // whole ruleset, wherever they are declared (like ModSecurity, which
+        // consults them when a rule is evaluated). Removals are resolved up
+        // front so removed rules are never compiled; target updates are
+        // applied after the compile loop.
         let excluded = excluded_rules(&directives);
+        let mut target_updates: Vec<UpdateTargetById> = Vec::new();
 
-        for (index, directive) in directives.into_iter().enumerate() {
-            if excluded.get(index) == Some(&true) {
+        for (directive, excluded) in directives.into_iter().zip(excluded) {
+            if excluded {
                 continue;
             }
             match directive {
@@ -323,47 +328,56 @@ fn extract_phase(actions: &[Action]) -> Phase {
     Phase::RequestBody // ModSecurity default
 }
 
-/// A static exclusion applies to complete logical rules declared before it.
+/// Mark the rules removed by `SecRuleRemoveById`, `SecRuleRemoveByTag` and
+/// `SecRuleRemoveByMsg`, indexed like `directives`.
+///
+/// Like ModSecurity v3, which consults its exclusions whenever a rule is
+/// evaluated, a removal applies to the whole ruleset wherever it is declared.
+/// The selector is matched against the chain starter, and the continuation
+/// rules are removed with it.
 fn excluded_rules(directives: &[Directive]) -> Vec<bool> {
-    let mut excluded = Vec::new();
-    for (index, directive) in directives.iter().enumerate() {
-        if !matches!(
-            directive,
-            Directive::SecRuleRemoveById(_)
-                | Directive::SecRuleRemoveByTag(_)
-                | Directive::SecRuleRemoveByMsg(_)
-        ) {
-            continue;
+    let mut ids: Vec<&RuleIdSelector> = Vec::new();
+    let mut tags = Vec::new();
+    let mut msgs = Vec::new();
+    for directive in directives {
+        match directive {
+            Directive::SecRuleRemoveById(selectors) => ids.extend(selectors),
+            Directive::SecRuleRemoveByTag(tag) => tags.push(tag),
+            Directive::SecRuleRemoveByMsg(msg) => msgs.push(msg),
+            _ => {}
         }
-        excluded.resize(directives.len(), false);
-        let mut child = false;
-        let mut remove = false;
-        for (previous, excluded) in directives[..index].iter().zip(&mut excluded) {
-            let actions = match previous {
-                Directive::SecRule(rule) => &rule.actions,
-                Directive::SecAction(action) => &action.actions,
-                _ => continue,
-            };
-            if !child {
-                remove = match directive {
-                    Directive::SecRuleRemoveById(ids) => extract_id(actions)
-                        .and_then(|id| id.parse::<u64>().ok())
-                        .is_some_and(|id| ids.iter().any(|range| range.matches(id))),
-                    Directive::SecRuleRemoveByTag(tag) => actions
-                        .iter()
-                        .any(|a| matches!(a, Action::Metadata(MetadataAction::Tag(t)) if t == tag)),
-                    Directive::SecRuleRemoveByMsg(msg) => {
-                        actions.iter().rev().find_map(|a| match a {
-                            Action::Metadata(MetadataAction::Msg(m)) => Some(m),
-                            _ => None,
-                        }) == Some(msg)
-                    }
-                    _ => unreachable!(),
-                };
-            }
-            *excluded |= remove;
-            child = has_chain(actions);
+    }
+
+    let mut excluded = vec![false; directives.len()];
+    if ids.is_empty() && tags.is_empty() && msgs.is_empty() {
+        return excluded;
+    }
+    let mut child = false;
+    let mut remove = false;
+    for (directive, excluded) in directives.iter().zip(&mut excluded) {
+        let actions = match directive {
+            Directive::SecRule(rule) => &rule.actions,
+            Directive::SecAction(action) => &action.actions,
+            _ => continue,
+        };
+        if !child {
+            remove = extract_id(actions)
+                .and_then(|id| id.parse::<u64>().ok())
+                .is_some_and(|id| ids.iter().any(|selector| selector.matches(id)))
+                || actions.iter().any(
+                    |a| matches!(a, Action::Metadata(MetadataAction::Tag(t)) if tags.contains(&t)),
+                )
+                || actions
+                    .iter()
+                    .rev()
+                    .find_map(|a| match a {
+                        Action::Metadata(MetadataAction::Msg(m)) => Some(m),
+                        _ => None,
+                    })
+                    .is_some_and(|m| msgs.contains(&m));
         }
+        *excluded = remove;
+        child = has_chain(actions);
     }
     excluded
 }

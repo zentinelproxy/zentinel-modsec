@@ -403,13 +403,24 @@ impl Transformation for SqlHexDecode {
     }
 }
 
-/// UTF-8 to Unicode transformation (pass-through for now).
+/// Serialize non-ASCII code points as IIS-style %u escapes.
 pub struct Utf8ToUnicode;
 
 impl Transformation for Utf8ToUnicode {
     fn transform<'a>(&self, input: &'a str) -> Cow<'a, str> {
-        // In Rust strings are already UTF-8, this is a no-op
-        Cow::Borrowed(input)
+        if input.is_ascii() {
+            return Cow::Borrowed(input);
+        }
+        use std::fmt::Write;
+        let mut result = String::with_capacity(input.len());
+        for c in input.chars() {
+            if c.is_ascii() {
+                result.push(c);
+            } else {
+                write!(&mut result, "%u{:04x}", c as u32).expect("writing to a String");
+            }
+        }
+        Cow::Owned(result)
     }
 
     fn name(&self) -> &'static str {
@@ -595,6 +606,13 @@ impl Transformation for Sha256 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn utf8_to_unicode_encodes_non_ascii_code_points() {
+        let t = Utf8ToUnicode;
+        assert_eq!(t.transform("École Ａ 🍺"), "%u00c9cole %uff21 %u1f37a");
+        assert!(matches!(t.transform("ASCII%20\0"), Cow::Borrowed(_)));
+    }
 
     #[test]
     fn test_lowercase() {

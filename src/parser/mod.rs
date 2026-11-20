@@ -38,12 +38,20 @@ pub use variable::{Selection, VariableName, VariableSpec, XmlTarget};
 
 use crate::error::{Error, Result, SourceLocation};
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+// How deeply Include directives may nest. ModSecurity v3 has no limit; the
+// number is the one Coraza uses, applied to nesting so that any number of
+// sibling includes stays loadable.
+const MAX_INCLUDE_DEPTH: usize = 100;
 
 /// Parser for ModSecurity configuration files.
 pub struct Parser {
     /// Parsed directives.
     directives: Vec<Directive>,
+    /// Canonical paths of the included files currently being read, outermost
+    /// first.
+    include_stack: Vec<PathBuf>,
     /// Current source location for error reporting.
     location: SourceLocation,
     /// Default actions to apply to rules, keyed by the phase they configure.
@@ -59,9 +67,25 @@ impl Parser {
     pub fn new() -> Self {
         Self {
             directives: Vec::new(),
+            include_stack: Vec::new(),
             location: SourceLocation::default(),
             default_actions: HashMap::new(),
         }
+    }
+
+    /// Append one caller-supplied source atomically. Included files participate
+    /// in the same append, so rollback only needs a single checkpoint.
+    fn try_append(&mut self, parse: impl FnOnce(&mut Self) -> Result<()>) -> Result<()> {
+        let count = self.directives.len();
+        let defaults = self.default_actions.clone();
+        let location = self.location.clone();
+        if let Err(error) = parse(self) {
+            self.directives.truncate(count);
+            self.default_actions = defaults;
+            self.location = location;
+            return Err(error);
+        }
+        Ok(())
     }
 
     /// Parse a configuration string.
@@ -71,6 +95,10 @@ impl Parser {
 
     /// Parse a configuration string with file location.
     pub fn parse_with_location(&mut self, input: &str, file: Option<&Path>) -> Result<()> {
+        self.try_append(|parser| parser.parse_input(input, file))
+    }
+
+    fn parse_input(&mut self, input: &str, file: Option<&Path>) -> Result<()> {
         self.location.file = file.map(|p| p.to_path_buf());
         self.location.line = 1;
         self.location.column = 1;
@@ -106,32 +134,26 @@ impl Parser {
 
     /// Parse a configuration file.
     pub fn parse_file(&mut self, path: &Path) -> Result<()> {
+        self.try_append(|parser| parser.read_file(path))
+    }
+
+    fn read_file(&mut self, path: &Path) -> Result<()> {
         let content = std::fs::read_to_string(path).map_err(|e| Error::RuleFileLoad {
             path: path.to_path_buf(),
             source: e,
         })?;
-        self.parse_with_location(&content, Some(path))
+        self.parse_input(&content, Some(path))
     }
 
     /// Parse files matching a glob pattern.
     pub fn parse_glob(&mut self, pattern: &str) -> Result<()> {
-        let paths = glob::glob(pattern)
-            .map_err(|e| Error::parse(format!("invalid glob pattern: {}", e), pattern))?;
+        self.try_append(|parser| parser.read_glob(pattern))
+    }
 
-        for entry in paths {
-            match entry {
-                Ok(path) => {
-                    if path.is_file() {
-                        self.parse_file(&path)?;
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(error = %e, "error reading glob entry");
-                }
-            }
-        }
-
-        Ok(())
+    fn read_glob(&mut self, pattern: &str) -> Result<()> {
+        glob_files(pattern)?
+            .iter()
+            .try_for_each(|path| self.read_file(path))
     }
 
     /// Get the parsed directives.
@@ -153,6 +175,20 @@ impl Parser {
             "secruleengine" => self.parse_secruleengine(lexer),
             "secdefaultaction" => self.parse_secdefaultaction(lexer),
             "secruleremovebyid" => self.parse_secruleremovebyid(lexer),
+            "secruleremovebytag" | "secruleremovebymsg" => {
+                let value = lexer.remaining_argument();
+                if value.is_empty() {
+                    return Err(Error::parse(
+                        format!("{name} requires a value"),
+                        self.location.to_string(),
+                    ));
+                }
+                Ok(if name.eq_ignore_ascii_case("SecRuleRemoveByTag") {
+                    Directive::SecRuleRemoveByTag(value)
+                } else {
+                    Directive::SecRuleRemoveByMsg(value)
+                })
+            }
             "secruleupdatetargetbyid" => self.parse_secruleupdatetargetbyid(lexer),
             "secrequestbodyaccess" => self.parse_boolean_directive(lexer, "SecRequestBodyAccess"),
             "secresponsebodyaccess" => self.parse_boolean_directive(lexer, "SecResponseBodyAccess"),
@@ -396,28 +432,81 @@ impl Parser {
 
     /// Parse an Include directive.
     fn parse_include(&mut self, lexer: &mut Lexer) -> Result<Directive> {
-        let path = self.expect_argument(lexer, "Include path")?;
+        let operand = self.expect_argument(lexer, "Include path")?;
+        let (resolved_path, files) = self.resolve_include(&operand)?;
+        files
+            .iter()
+            .try_for_each(|file| self.read_included_file(file))?;
+        Ok(Directive::Include(resolved_path))
+    }
 
-        // Resolve relative paths (including globs) against the including file's
-        // directory. A glob pattern never `exists()` as a literal path, so it is
-        // detected explicitly rather than falling back to a CWD-relative path.
-        let resolved_path =
-            if let Some(parent) = self.location.file.as_ref().and_then(|f| f.parent()) {
-                let candidate = parent.join(&path);
-                let is_glob = path.contains(['*', '?', '[']);
-                if candidate.exists() || is_glob {
-                    candidate.to_string_lossy().to_string()
-                } else {
-                    path
-                }
-            } else {
-                path
+    /// Resolve an Include operand to the path it names and the files to read.
+    ///
+    /// Like ModSecurity v3, a relative operand is tried as given (relative to
+    /// the working directory) first and beside the including file second.
+    fn resolve_include(&self, operand: &str) -> Result<(PathBuf, Vec<PathBuf>)> {
+        let given = Path::new(operand);
+        let beside = self
+            .location
+            .file
+            .as_deref()
+            .and_then(Path::parent)
+            .filter(|parent| given.is_relative() && !parent.as_os_str().is_empty());
+
+        if !operand.contains(['*', '?', '[']) {
+            let resolved = match beside {
+                Some(parent) if !given.is_file() => parent.join(given),
+                _ => given.to_path_buf(),
             };
+            return Ok((resolved.clone(), vec![resolved]));
+        }
 
-        // Parse the included file(s)
-        self.parse_glob(&resolved_path)?;
+        let files = glob_files(operand)?;
+        match beside {
+            Some(parent) if files.is_empty() => {
+                // Only the directive's operand is a pattern. The declaring
+                // directory may itself have brackets or other glob characters.
+                let literal_parent = parent.to_str().ok_or_else(|| {
+                    Error::parse(
+                        "glob include needs a UTF-8 directory",
+                        self.location.to_string(),
+                    )
+                })?;
+                let pattern = Path::new(&glob::Pattern::escape(literal_parent)).join(given);
+                Ok((parent.join(given), glob_files(&pattern.to_string_lossy())?))
+            }
+            _ => Ok((given.to_path_buf(), files)),
+        }
+    }
 
-        Ok(Directive::Include(resolved_path.into()))
+    /// Read one included file, rejecting include cycles and excessive nesting.
+    fn read_included_file(&mut self, path: &Path) -> Result<()> {
+        if self.include_stack.len() >= MAX_INCLUDE_DEPTH {
+            return Err(Error::parse(
+                format!("Include directives are nested more than {MAX_INCLUDE_DEPTH} levels deep"),
+                self.location.to_string(),
+            ));
+        }
+        let canonical = path.canonicalize().map_err(|source| Error::RuleFileLoad {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        if self.include_stack.contains(&canonical) {
+            return Err(Error::parse(
+                format!(
+                    "Include cycle: {} is already being loaded",
+                    canonical.display()
+                ),
+                self.location.to_string(),
+            ));
+        }
+
+        let including_location = self.location.clone();
+        self.include_stack.push(canonical);
+        let read = self.read_file(path);
+        self.include_stack.pop();
+        self.location = including_location;
+        read
     }
 
     /// Expect an unquoted argument.
@@ -467,7 +556,8 @@ impl Parser {
     /// Skip to end of current line.
     fn skip_to_end_of_line(&self, lexer: &mut Lexer) {
         while let Some(token) = lexer.next_token() {
-            if matches!(token.kind, TokenKind::Newline) {
+            // Comment tokens already consume their terminating newline.
+            if matches!(token.kind, TokenKind::Comment | TokenKind::Newline) {
                 break;
             }
         }
@@ -527,6 +617,32 @@ impl Parser {
             .map(|v| v.as_slice())
             .unwrap_or(&[])
     }
+}
+
+/// Expand a glob pattern to the regular files it matches.
+///
+/// A match that cannot be inspected, such as a dangling symlink, is skipped
+/// with a warning so that it does not fail the whole load.
+fn glob_files(pattern: &str) -> Result<Vec<PathBuf>> {
+    let entries = glob::glob(pattern)
+        .map_err(|e| Error::parse(format!("invalid glob pattern: {}", e), pattern))?;
+
+    let mut files = Vec::new();
+    for entry in entries {
+        match entry {
+            Ok(path) => match path.metadata() {
+                Ok(metadata) if metadata.is_file() => files.push(path),
+                Ok(_) => {}
+                Err(error) => {
+                    tracing::warn!(path = %path.display(), %error, "skipping unreadable glob match");
+                }
+            },
+            Err(error) => {
+                tracing::warn!(path = %error.path().display(), error = %error.error(), "skipping unreadable glob match");
+            }
+        }
+    }
+    Ok(files)
 }
 
 /// The phase ModSecurity assigns when a rule does not name one.

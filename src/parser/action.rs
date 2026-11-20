@@ -329,7 +329,16 @@ fn parse_single_action(input: &str) -> Result<Action> {
         "id" => {
             let id: u64 = argument
                 .as_ref()
-                .and_then(|s| s.parse().ok())
+                .and_then(|s| {
+                    let numeric = if let Some(inner) = s.strip_prefix('\'') {
+                        inner.strip_suffix('\'')?
+                    } else if let Some(inner) = s.strip_prefix('"') {
+                        inner.strip_suffix('"')?
+                    } else {
+                        s.as_str()
+                    };
+                    numeric.parse().ok()
+                })
                 .ok_or_else(|| Error::InvalidActionArgument {
                     action: "id".to_string(),
                     message: "invalid ID".to_string(),

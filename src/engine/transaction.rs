@@ -7,7 +7,7 @@ use super::control::{CtlDirective, TransactionControls};
 use super::intervention::Intervention;
 use super::phase::Phase;
 use super::ruleset::{CompiledRule, CompiledRuleset, RuleEngineMode};
-use super::scoring::AnomalyScore;
+use super::scoring::ANOMALY_SCORE;
 use crate::actions::{
     execute_actions, ActionResult, DisruptiveOutcome, FlowOutcome, SetVarOp as RuleSetVar,
     SetVarOperation,
@@ -51,8 +51,6 @@ pub struct Transaction {
     phase: Phase,
     /// Intervention (if any).
     intervention: Option<Intervention>,
-    /// Anomaly score tracker.
-    anomaly_score: AnomalyScore,
     /// Default block status.
     default_status: u16,
     /// Matched rules.
@@ -176,7 +174,6 @@ impl Transaction {
             tx: TxCollection::new(),
             phase: Phase::RequestHeaders,
             intervention: None,
-            anomaly_score: AnomalyScore::new(),
             default_status,
             matched_rules: Vec::new(),
             allowed: false,
@@ -433,9 +430,13 @@ impl Transaction {
         &self.matched_rules
     }
 
-    /// Get the anomaly score.
+    /// Get the anomaly score: the value of `TX:anomaly_score`, or 0 when no
+    /// rule has set it.
     pub fn anomaly_score(&self) -> i32 {
-        self.anomaly_score.inbound
+        self.tx
+            .get(ANOMALY_SCORE)
+            .and_then(|values| values.first()?.parse().ok())
+            .unwrap_or(0)
     }
 
     /// Get the TX collection.
@@ -470,8 +471,9 @@ impl Transaction {
             return Ok(());
         }
 
-        // Clone rules to avoid borrow conflicts with mutable self
-        let rules: Vec<CompiledRule> = self.ruleset.rules_for_phase(phase).to_vec();
+        // Keep the immutable ruleset alive independently of mutable transaction state.
+        let ruleset = Arc::clone(&self.ruleset);
+        let rules = ruleset.rules_for_phase(phase);
         if rules.is_empty() {
             return Ok(());
         }
@@ -762,9 +764,6 @@ impl Transaction {
             idx += 1;
         }
 
-        // Sync anomaly score to TX
-        self.anomaly_score.sync_to_tx(&mut self.tx);
-
         Ok(())
     }
 
@@ -1039,11 +1038,6 @@ impl Transaction {
                 });
             }
         }
-
-        // Sync anomaly score from TX if relevant
-        if resolved.name == "anomaly_score" {
-            self.anomaly_score.sync_from_tx(&self.tx);
-        }
     }
 }
 
@@ -1101,7 +1095,7 @@ impl std::fmt::Debug for Transaction {
         f.debug_struct("Transaction")
             .field("phase", &self.phase)
             .field("has_intervention", &self.intervention.is_some())
-            .field("anomaly_score", &self.anomaly_score.inbound)
+            .field("anomaly_score", &self.anomaly_score())
             .field("matched_rules", &self.matched_rules)
             .finish()
     }

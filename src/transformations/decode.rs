@@ -47,6 +47,11 @@ impl Transformation for UrlDecodeUni {
                         }
                     }
                     if let Ok(code) = u32::from_str_radix(&hex, 16) {
+                        let code = if (0xff01..=0xff5e).contains(&code) {
+                            code - 0xfee0
+                        } else {
+                            code
+                        };
                         if let Some(decoded) = char::from_u32(code) {
                             result.push(decoded);
                             modified = true;
@@ -320,6 +325,18 @@ mod tests {
         let t = UrlDecode;
         assert_eq!(t.transform("hello%20world"), "hello world");
         assert_eq!(t.transform("test%2Fpath"), "test/path");
+    }
+
+    #[test]
+    fn url_decode_uni_folds_fullwidth_ascii_escapes() {
+        let t = UrlDecodeUni;
+        for ascii in b'!'..=b'~' {
+            let escaped = format!("%u{:04X}", u32::from(ascii) + 0xfee0);
+            assert_eq!(t.transform(&escaped), char::from(ascii).to_string());
+        }
+        assert_eq!(t.transform("%UFF21"), "A");
+        assert_eq!(t.transform("%uFF00%uFF5F"), "＀｟");
+        assert_eq!(t.transform("Ａ"), "Ａ");
     }
 
     #[test]

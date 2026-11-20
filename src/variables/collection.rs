@@ -119,10 +119,13 @@ impl MutableCollection for HashMapCollection {
             .and_then(|v| v.first())
             .and_then(|s| s.parse().ok())
             .unwrap_or(0);
-        self.set(key.to_string(), (current + amount).to_string());
+        // Wrapping, so that an operand a request supplies (`=+%{tx.1}`) cannot
+        // overflow. libmodsecurity adds plain `int`s (`set_var.cc`), which
+        // wrap in practice too.
+        self.set(key.to_string(), current.wrapping_add(amount).to_string());
     }
 
     fn decrement(&mut self, key: &str, amount: i64) {
-        self.increment(key, -amount);
+        self.increment(key, amount.wrapping_neg());
     }
 }

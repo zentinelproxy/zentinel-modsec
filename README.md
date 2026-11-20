@@ -180,10 +180,15 @@ async fn waf(
 `SecRequestBodyLimit`, `SecResponseBodyLimit`, `Include`. Other directives are
 logged and skipped.
 
-Relative includes resolve beside the declaring file. A glob with no matches is
-allowed. An unreadable match fails the load. Each configuration accepts up to
-100 include directives, counting a glob once. If a parse fails, the parser
-retains the configuration it held before the call.
+A relative `Include` is tried as given, relative to the working directory, and
+then beside the declaring file, as in ModSecurity v3. A glob with no matches is
+allowed, and a match that cannot be read, such as a dangling symlink, is
+skipped with a warning. Includes may nest up to 100 levels deep, and a file
+that includes itself, directly or through other files, is an error. If a parse
+fails, the parser retains the configuration it held before the call.
+
+**Changed after 0.6.0:** an `Include` of a literal path that does not exist is
+now a load error. It used to be skipped silently.
 
 **Operators:** `@rx`, `@pm`, `@pmf`, `@pmFromFile`, `@contains`, `@beginsWith`,
 `@endsWith`, `@streq`, `@within`, `@eq`, `@ne`, `@gt`, `@ge`, `@lt`, `@le`,

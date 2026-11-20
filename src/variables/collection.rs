@@ -68,6 +68,16 @@ impl HashMapCollection {
     pub fn clear(&mut self) {
         self.data.clear();
     }
+
+    /// The first value of a key as a number, or 0 when it is missing or not
+    /// numeric.
+    fn numeric(&self, key: &str) -> i64 {
+        self.data
+            .get(key)
+            .and_then(|v| v.first())
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0)
+    }
 }
 
 impl Collection for HashMapCollection {
@@ -113,19 +123,17 @@ impl MutableCollection for HashMapCollection {
     }
 
     fn increment(&mut self, key: &str, amount: i64) {
-        let current: i64 = self
-            .data
-            .get(key)
-            .and_then(|v| v.first())
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(0);
-        // Wrapping, so that an operand a request supplies (`=+%{tx.1}`) cannot
-        // overflow. libmodsecurity adds plain `int`s (`set_var.cc`), which
-        // wrap in practice too.
-        self.set(key.to_string(), current.wrapping_add(amount).to_string());
+        // Saturating, so that an operand a request supplies (`=+%{tx.1}`) can
+        // neither overflow nor carry a score round to the other end of the
+        // range, where a threshold comparison would stop matching.
+        let sum = self.numeric(key).saturating_add(amount);
+        self.set(key.to_string(), sum.to_string());
     }
 
     fn decrement(&mut self, key: &str, amount: i64) {
-        self.increment(key, amount.wrapping_neg());
+        // Subtracted directly rather than added negated: `i64::MIN` has no
+        // negation.
+        let difference = self.numeric(key).saturating_sub(amount);
+        self.set(key.to_string(), difference.to_string());
     }
 }

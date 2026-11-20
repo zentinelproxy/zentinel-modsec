@@ -60,7 +60,11 @@ impl<'a> Lexer<'a> {
                 line.push(self.advance().unwrap());
             }
             let line = line.trim();
-            if !continued || !(line.is_empty() || line.starts_with('#')) {
+            if continued && line.is_empty() {
+                // Nothing was continued: the directive ends at the blank line.
+                break;
+            }
+            if !continued || !line.starts_with('#') {
                 if let Some(prefix) = line.strip_suffix('\\') {
                     text.push_str(prefix);
                     continued = true;
@@ -74,8 +78,9 @@ impl<'a> Lexer<'a> {
             }
         }
         let text = text.trim();
-        text.strip_prefix('"')
-            .and_then(|s| s.strip_suffix('"'))
+        ['"', '\'']
+            .into_iter()
+            .find_map(|quote| text.strip_prefix(quote)?.strip_suffix(quote))
             .unwrap_or(text)
             .to_owned()
     }

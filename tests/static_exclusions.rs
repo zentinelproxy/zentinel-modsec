@@ -45,6 +45,32 @@ SecAction "id:32,phase:1,pass""#;
 }
 
 #[test]
+fn single_quoted_exclusion_value_is_unquoted() {
+    let rules = r#"SecRuleEngine On
+SecRuleRemoveByTag 'attack-sqli'
+SecRuleRemoveByMsg 'local policy'
+SecAction "id:1,phase:1,deny,tag:attack-sqli"
+SecAction "id:2,phase:1,deny,msg:'local policy'"
+SecAction "id:3,phase:1,pass""#;
+    assert_eq!(matched(rules), ["3"]);
+}
+
+#[test]
+fn blank_line_ends_a_continued_exclusion_value() {
+    for ending in ["\n", "\r\n"] {
+        let rules = [
+            "SecRuleEngine On",
+            "SecRuleRemoveByTag local \\",
+            "",
+            r#"SecAction "id:1,phase:1,pass,tag:other""#,
+            r#"SecAction "id:2,phase:1,pass,tag:local""#,
+        ]
+        .join(ending);
+        assert_eq!(matched(&rules), ["1"]);
+    }
+}
+
+#[test]
 fn missing_exclusion_argument_is_a_load_error() {
     assert!(ModSecurity::from_string("SecRuleRemoveByMsg\nSecAction \"id:1,pass\"").is_err());
 }

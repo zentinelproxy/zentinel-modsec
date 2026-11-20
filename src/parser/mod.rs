@@ -175,6 +175,20 @@ impl Parser {
             "secruleengine" => self.parse_secruleengine(lexer),
             "secdefaultaction" => self.parse_secdefaultaction(lexer),
             "secruleremovebyid" => self.parse_secruleremovebyid(lexer),
+            "secruleremovebytag" | "secruleremovebymsg" => {
+                let value = lexer.remaining_argument();
+                if value.is_empty() {
+                    return Err(Error::parse(
+                        format!("{name} requires a value"),
+                        self.location.to_string(),
+                    ));
+                }
+                Ok(if name.eq_ignore_ascii_case("SecRuleRemoveByTag") {
+                    Directive::SecRuleRemoveByTag(value)
+                } else {
+                    Directive::SecRuleRemoveByMsg(value)
+                })
+            }
             "secruleupdatetargetbyid" => self.parse_secruleupdatetargetbyid(lexer),
             "secrequestbodyaccess" => self.parse_boolean_directive(lexer, "SecRequestBodyAccess"),
             "secresponsebodyaccess" => self.parse_boolean_directive(lexer, "SecResponseBodyAccess"),

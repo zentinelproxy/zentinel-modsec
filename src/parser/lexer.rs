@@ -33,7 +33,7 @@ pub enum TokenKind {
 
 /// Whether `c` ends a line. Besides `\n` these are the Unicode line
 /// terminators, which a text editor shows as a line break.
-fn is_line_terminator(c: char) -> bool {
+pub(super) fn is_line_terminator(c: char) -> bool {
     matches!(c, '\n' | '\u{85}' | '\u{2028}' | '\u{2029}')
 }
 

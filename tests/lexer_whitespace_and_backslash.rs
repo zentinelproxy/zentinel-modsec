@@ -41,6 +41,22 @@ fn unicode_line_terminators_end_a_comment() {
     }
 }
 
+#[test]
+fn unicode_line_terminators_end_a_rule_id_list() {
+    for terminator in ["\u{85}", "\u{2028}", "\u{2029}"] {
+        let rules = format!("{FIRST}\nSecRuleRemoveById 701{terminator}{LAST}");
+        assert_eq!(matched_rules(&rules), ["702"], "{terminator:?}");
+    }
+}
+
+#[test]
+fn unicode_line_terminators_end_a_target_update() {
+    for terminator in ["\u{85}", "\u{2028}", "\u{2029}"] {
+        let rules = format!("{FIRST}\nSecRuleUpdateTargetById 999 ARGS{terminator}{LAST}");
+        assert_eq!(matched_rules(&rules), ["701", "702"], "{terminator:?}");
+    }
+}
+
 /// Loads `rules` and returns the warnings logged while doing so.
 fn load_warnings(rules: &str) -> String {
     let (loaded, log) = common::capture_log(|| ModSecurity::from_string(rules));

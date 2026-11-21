@@ -9,9 +9,14 @@ pins (see [`docs/conformance.md`](docs/conformance.md)).
 
 ## [Unreleased]
 
-CRS conformance: 4,949 to 4,952 of 5,184 runnable cases.
+CRS conformance: 4,949 to 4,969 of 5,184 runnable cases.
 
 ### Behavior changes
+
+- **Regex key selections compare keys case-insensitively**, as in ModSecurity
+  v3: `ARGS:/^user/`, `TX:/.../` and `!ARGS:/.../` now match keys in any
+  case. CRS 922110 now sees the multipart Content-Type keys 922150 sets. Unlike
+  v3, which folds ASCII only, non-ASCII letters fold too. (#83, by PQCrypta)
 
 - **`@detectSQLi` gives libinjection's verdict.** It used to be a set of
   regular expressions and a small fingerprint list, which matched ordinary

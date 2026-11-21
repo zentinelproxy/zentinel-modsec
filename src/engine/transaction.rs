@@ -971,7 +971,7 @@ impl Transaction {
                 .last()
                 .map(|(n, _)| n.clone())
                 .unwrap_or_default(),
-            OperandMacro::Tx(name) => self
+            OperandMacro::Tx(name) | OperandMacro::Bare(name) => self
                 .tx
                 .get(name)
                 .and_then(|v| v.first().map(|s| s.to_string()))

@@ -587,13 +587,16 @@ fn compile_operator_reporting(
     }
 }
 
-/// Whether a numeric operator's argument holds a macro on a collection the
-/// engine cannot resolve, counting each such macro in `seen`.
+/// Whether a numeric operator's argument holds a macro the engine cannot
+/// resolve, counting each such macro in `seen`.
 ///
 /// libmodsecurity would resolve the macro. Here it expands to an empty string,
 /// which a numeric operator reads as 0: `@gt %{env.MAX_LEN}` would compare
 /// against a limit of 0 and match every non-empty value. The rule is left
 /// unable to match instead, and [`report_unresolvable_operands`] says so.
+///
+/// A bare `%{REMOTE_PORT}` is the same case: libmodsecurity reads the
+/// variable, never `tx.REMOTE_PORT`.
 ///
 /// A macro that can be resolved but has no value (`%{tx.unset}`) is not this
 /// case: it is 0 in libmodsecurity too.
@@ -619,8 +622,8 @@ fn report_unresolvable_operands(seen: &BTreeMap<String, usize>) {
         tracing::warn!(
             macro = %operand,
             rules_affected = count,
-            "numeric operator argument uses a macro on a collection this \
-             engine cannot resolve; the operator will never match"
+            "numeric operator argument uses a macro this engine cannot \
+             resolve; the operator will never match"
         );
     }
 }

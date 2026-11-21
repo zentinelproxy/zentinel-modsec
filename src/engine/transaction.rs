@@ -5,6 +5,7 @@ use std::sync::Arc;
 use super::chain::ChainState;
 use super::control::{CtlDirective, TransactionControls};
 use super::intervention::Intervention;
+use super::operand_macro::{self, OperandMacro};
 use super::phase::Phase;
 use super::ruleset::{CompiledRule, CompiledRuleset, RuleEngineMode};
 use super::scoring::ANOMALY_SCORE;
@@ -904,19 +905,22 @@ impl Transaction {
         // If the operator argument references runtime macros (e.g.
         // `@ge %{tx.inbound_anomaly_score_threshold}`), expand them against the
         // current TX state and recompile the operator so the comparison runs
-        // against the resolved value. Otherwise use the precompiled operator.
+        // against the resolved value. Otherwise use the precompiled operator,
+        // which for an operand the engine cannot resolve is one that never
+        // matches.
         let dynamic_operator;
-        let operator: &dyn Operator = if rule.operator_spec.argument.contains("%{") {
-            let expanded = self.expand_operator_macros(&rule.operator_spec.argument);
-            dynamic_operator = compile_operator(&OperatorSpec {
-                negated: rule.operator_spec.negated,
-                name: rule.operator_spec.name,
-                argument: expanded,
-            })?;
-            dynamic_operator.as_ref()
-        } else {
-            rule.operator.as_ref()
-        };
+        let operator: &dyn Operator =
+            if !rule.operand_unresolvable && rule.operator_spec.argument.contains("%{") {
+                let expanded = self.expand_operator_macros(&rule.operator_spec.argument);
+                dynamic_operator = compile_operator(&OperatorSpec {
+                    negated: rule.operator_spec.negated,
+                    name: rule.operator_spec.name,
+                    argument: expanded,
+                })?;
+                dynamic_operator.as_ref()
+            } else {
+                rule.operator.as_ref()
+            };
 
         // Apply transformations and match every value
         let mut matches = Vec::new();
@@ -956,53 +960,29 @@ impl Transaction {
     /// `REQUEST_HEADERS.<name>` and `MATCHED_VAR`/`MATCHED_VAR_NAME`. Anything
     /// else expands to an empty string.
     fn expand_operator_macros(&self, arg: &str) -> String {
-        // Compiled once: this runs on every evaluation of an operator whose
-        // argument contains `%{`.
-        static MACRO: once_cell::sync::Lazy<regex::Regex> = once_cell::sync::Lazy::new(|| {
-            regex::Regex::new(r"%\{([^}]+)\}").expect("static macro regex is valid")
-        });
-        MACRO
-            .replace_all(arg, |caps: &regex::Captures| {
-                let inner = &caps[1];
-                // Bare names that are not collections (`%{MATCHED_VAR_NAME}`).
-                match inner.to_ascii_lowercase().as_str() {
-                    "matched_var" => {
-                        return self
-                            .matched_vars
-                            .last()
-                            .map(|(_, v)| v.clone())
-                            .unwrap_or_default()
-                    }
-                    "matched_var_name" => {
-                        return self
-                            .matched_vars
-                            .last()
-                            .map(|(n, _)| n.clone())
-                            .unwrap_or_default()
-                    }
-                    _ => {}
-                }
-                let (collection, name) = match inner.split_once('.') {
-                    Some((c, n)) => (c.to_ascii_lowercase(), n),
-                    None => ("tx".to_string(), inner),
-                };
-                match collection.as_str() {
-                    "tx" => self
-                        .tx
-                        .get(name)
-                        .and_then(|v| v.first().map(|s| s.to_string()))
-                        .unwrap_or_default(),
-                    // CRS 943110: `!@endsWith %{request_headers.host}`.
-                    "request_headers" => self
-                        .request
-                        .headers
-                        .get(&name.to_ascii_lowercase())
-                        .and_then(|v| v.first().map(|s| s.to_string()))
-                        .unwrap_or_default(),
-                    _ => String::new(),
-                }
-            })
-            .into_owned()
+        operand_macro::expand(arg, |operand| match operand {
+            OperandMacro::MatchedVar => self
+                .matched_vars
+                .last()
+                .map(|(_, v)| v.clone())
+                .unwrap_or_default(),
+            OperandMacro::MatchedVarName => self
+                .matched_vars
+                .last()
+                .map(|(n, _)| n.clone())
+                .unwrap_or_default(),
+            OperandMacro::Tx(name) => self
+                .tx
+                .get(name)
+                .and_then(|v| v.first().map(|s| s.to_string()))
+                .unwrap_or_default(),
+            OperandMacro::RequestHeader(name) => self
+                .request
+                .headers
+                .get(&name.to_ascii_lowercase())
+                .and_then(|v| v.first().map(|s| s.to_string()))
+                .unwrap_or_default(),
+        })
     }
 
     /// Publish the captures of a `capture` rule as `TX:0`..`TX:9`.

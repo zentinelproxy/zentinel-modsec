@@ -4,6 +4,7 @@
 //! analysis, similar to the original libinjection library.
 
 pub mod sqli;
+mod sqli_data;
 pub mod xss;
 
 pub use sqli::{is_sqli, sqli_fingerprint};

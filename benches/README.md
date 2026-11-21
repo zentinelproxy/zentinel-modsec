@@ -67,6 +67,19 @@ cargo bench --bench modsec_bench -- full_crs --baseline before
 The benchmark verifies the checkout commit and the working copy before loading
 the rules. Criterion reports warmed in-process transaction time for each fixture.
 
+### Against libmodsecurity
+
+The same checkout, configuration and three requests also run through
+libmodsecurity in `benches/libmodsec_compare.rs` (group `full_crs_comparison`).
+Both engines get the JSON body processor from rule 200001 of ModSecurity's
+recommended configuration. Before timing, each engine must block a disallowed
+method and a SQL injection and pass the three requests.
+
+```sh
+export CRS_BENCH_DIR=/tmp/crs-4.25.0
+cargo bench --features libmodsec-compare --bench libmodsec_compare -- full_crs_comparison
+```
+
 ## Requirements for libmodsecurity Comparison
 
 ```bash

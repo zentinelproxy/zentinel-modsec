@@ -1,0 +1,135 @@
+# zentinel-modsec
+
+A pure Rust ModSecurity v3 (SecLang) rule engine that loads and runs the OWASP
+Core Rule Set. Library crate `zentinel_modsec` plus a small CLI
+(`zentinel-modsec check|dump|test`). No C or C++ dependency, no FFI,
+`#![deny(unsafe_code)]`. It is the engine behind Zentinel's ZentinelSec agent;
+the separate `zentinel-agent-modsec` repository wraps libmodsecurity instead.
+
+The guiding question for every change: **does this make the engine behave more
+like ModSecurity v3, and if not, does it say so?**
+
+## Module map
+
+| Path | What lives there |
+|------|------------------|
+| `src/parser/` | `lexer.rs` (tokens, `\` continuations, CRLF), `mod.rs` (`Parser`: directives, `Include` resolution and nesting, per-phase `SecDefaultAction`, rollback on error), `directive.rs`, `variable.rs` (`VariableSpec`, key and regex selections), `operator.rs`, `action.rs` |
+| `src/engine/ruleset.rs` | `CompiledRuleset::compile`: directives to per-phase rules, chains, markers, static removals, `SecRuleUpdateTargetById`, load-time warnings |
+| `src/engine/transaction.rs` | `Transaction`: the `process_*` phase calls, rule and chain evaluation, `setvar`, captures, interventions |
+| `src/engine/control.rs` | `ctl:` actions and the per-transaction overrides they set |
+| `src/engine/operand_macro.rs` | `%{...}` expansion in operator arguments, and the load-time check for macros it cannot resolve |
+| `src/engine/{chain,phase,intervention,scoring}.rs` | Chain state, phase enum, `Intervention`, CRS TX key names |
+| `src/operators/` | `pattern.rs` (`@rx`, `@pm`), `comparison.rs` (string and numeric), `detection.rs` (`@detectSQLi`, `@detectXSS`), `network.rs` (`@ipMatch`), `validation.rs`; `mod.rs` maps names to implementations |
+| `src/transformations/` | `decode.rs`, `encode.rs`, `normalize.rs`, `pipeline.rs`; `mod.rs` maps `t:` names |
+| `src/variables/` | `request.rs` (request data and body processors), `json.rs`, `response.rs`, `resolver.rs` (variable to values), `tx.rs` (case-insensitive TX), `collection.rs` |
+| `src/actions/` | `data.rs` (`setvar`, `capture`), `disruptive.rs`, `flow.rs`, `metadata.rs` |
+| `src/libinjection/` | Pure Rust port of libinjection (`sqli.rs`, `xss.rs`) |
+| `src/main.rs` | The CLI |
+| `tests/` | One integration file per behavior; `tests/common/mod.rs` holds shared helpers |
+| `benches/` | criterion benches; `benches/README.md` has the pinned-CRS latency setup |
+
+Longer explanations: `docs/architecture.md`, `docs/conformance.md`,
+`docs/v3-compatibility.md`. User-visible changes go in `CHANGELOG.md`.
+
+## Commands
+
+```bash
+cargo build
+SKIP_CRS_CONFORMANCE=1 cargo test --all-targets   # what the CI Tests job runs
+cargo test --doc
+cargo fmt --all --check
+cargo clippy --all-targets -- -D warnings
+cargo doc --no-deps
+```
+
+CRS conformance (needs the corpus; CI pins the commit in `.github/workflows/ci.yml`):
+
+```bash
+mkdir -p test-rules/crs
+git -C test-rules/crs init -q
+git -C test-rules/crs fetch -q --depth 1 https://github.com/coreruleset/coreruleset.git \
+    30cb436b261a9f5ec32a5a0677e17f3cfa1a8739
+git -C test-rules/crs checkout -q FETCH_HEAD
+cp test-rules/crs/crs-setup.conf.example test-rules/crs/crs-setup.conf
+cargo test --release --test crs_conformance -- --nocapture
+```
+
+`test-rules/` is gitignored. `CRS_DIR` points the test at another checkout.
+Without the checkout and without `SKIP_CRS_CONFORMANCE`, the test fails on
+purpose rather than skipping.
+
+## Rules
+
+### ModSecurity v3 is the reference
+
+- Semantics come from `owasp-modsecurity/ModSecurity`, branch `v3/master`. When
+  a change claims parity, cite the v3 file (and lines where useful) in the code
+  comment or PR, as existing comments do (`operators/rx.cc`,
+  `actions/set_var.cc`, `seclang-parser.yy`).
+- Coraza is not the reference. It can be a hint; it never settles a question.
+- Known deliberate differences are listed in `docs/v3-compatibility.md`. A new
+  one gets a row there in the same change.
+
+### The CRS gate is exact
+
+- `tests/crs_conformance.rs` asserts the pass count **equals** `MIN_PASSING`
+  (currently 4949 of 5184 runnable cases). A gain fails the gate as surely as a
+  loss.
+- A change that moves the count sets `MIN_PASSING` to the measured number in
+  the same commit. A loss must name the rules that regressed and why.
+- Two open PRs that both move the count conflict even when the diff merges
+  cleanly. The second one rebases and re-measures; never add the deltas up.
+- Bump the pinned CRS commit in `ci.yml` and `MIN_PASSING` together, and update
+  the README conformance table. See `docs/conformance.md`.
+
+### Warn, don't fail; never diverge silently
+
+- Input v3 rejects or does not understand may be accepted when doing so is
+  harmless, but it must log a load-time `tracing::warn!`, once per distinct
+  thing with a count (see `report_unsupported_controls`,
+  `skip_unsupported_setvars`, `report_unresolvable_operands` in
+  `src/engine/ruleset.rs`). Warnings at request time are not a substitute.
+- Do not turn a config that loads today into a load error without a
+  `CHANGELOG.md` entry. Prefer skipping the unsupported part with a warning.
+- A rule that cannot work must not match everything. Dropping to "never
+  matches" is the safe failure (see the negation comment in
+  `compile_operator_reporting`).
+- Any change to what rules match is a behavior change: add it to the
+  `Unreleased` section of `CHANGELOG.md`.
+
+### Safety and performance
+
+- `#![deny(unsafe_code)]` stays. No C, C++ or FFI dependencies, and no new
+  dependency where the existing tree (`regex`, `aho-corasick`, `memchr`) will do.
+- Regexes are compiled once and reused, never per request: `@rx` validates at
+  load and builds once (`RxOperator`), rule-text key regexes go through
+  `cached_regex` in `src/variables/resolver.rs`. The one existing exception is
+  an operator argument containing `%{...}`, which is expanded and recompiled
+  per evaluation; do not add more.
+- Arithmetic on request-supplied values saturates (`collection.rs`
+  `increment`/`decrement`, `leading_integer` in `comparison.rs`). A request
+  must not be able to wrap an anomaly score below a threshold or panic the
+  transaction.
+- Evaluation is deterministic: collections iterate in insertion order
+  (`indexmap`). The exact gate depends on it.
+
+### Tests
+
+- Every semantic change has a test, usually a new or extended file in
+  `tests/` with a module comment stating the v3 behavior it pins.
+- Tests that assert a warning use `common::capture_log` (`mod common;`). It
+  installs one process-wide subscriber; a thread-scoped subscriber misses
+  events when another test thread reaches the log statement first.
+
+### Docs
+
+- American English, plain and checkable, as in the README. Numbers only from a
+  measurement in this repository, with the source named.
+- The README follows the org standard (`readme/STANDARD.md` in
+  `zentinelproxy/design`): section order, badges, footer, links that resolve.
+- `CHANGELOG.md` (Keep a Changelog) gets every user-visible change under
+  `Unreleased`, behavior changes first.
+
+## Review
+
+Checklist for reviewing changes: [rules/review.md](rules/review.md).

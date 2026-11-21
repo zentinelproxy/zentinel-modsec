@@ -9,6 +9,20 @@ pins (see [`docs/conformance.md`](docs/conformance.md)).
 
 ## [Unreleased]
 
+### Behavior changes
+
+- **Rules after a form feed, vertical tab or Unicode space are loaded.** Any
+  whitespace character other than space, tab or carriage return between
+  directives used to end the configuration silently, dropping every directive
+  after it. Those characters now separate tokens, and U+0085, U+2028 and
+  U+2029 end a line or a comment. v3 accepts none of them, so the load logs
+  one warning per distinct character with its position. Content that used to
+  be dropped is now parsed, so an error in it surfaces at load. (#79)
+- **An unquoted argument keeps a leading backslash.** `SecRule REQUEST_URI
+  \.php$` compiled `.php$` and now compiles `\.php$`; `Include
+  \\server\share\rules.conf` and `SecMarker \name` keep theirs too. A stray
+  backslash outside a word is still ignored, now with a warning. (#79)
+
 ## [0.7.0] - 2026-11-21
 
 CRS conformance: 4,900 to 4,949 of 5,184 runnable cases.
@@ -67,17 +81,6 @@ upgrading.
   An argument using a macro on a collection the engine cannot resolve
   (`%{env.MAX_LEN}`) is the exception: the rule never matches, and the load
   logs one warning per macro with the number of rules affected. (#80)
-- **Rules after a form feed, vertical tab or Unicode space are loaded.** Any
-  whitespace character other than space, tab or carriage return between
-  directives used to end the configuration silently, dropping every directive
-  after it. Those characters now separate tokens, and U+0085, U+2028 and
-  U+2029 end a line or a comment. v3 accepts none of them, so the load logs
-  one warning per distinct character with its position. Content that used to
-  be dropped is now parsed, so an error in it surfaces at load. (#79)
-- **An unquoted argument keeps a leading backslash.** `SecRule REQUEST_URI
-  \.php$` compiled `.php$` and now compiles `\.php$`; `Include
-  \\server\share\rules.conf` and `SecMarker \name` keep theirs too. A stray
-  backslash outside a word is still ignored, now with a warning. (#79)
 - **`t:urlDecodeUni` folds full-width ASCII escapes** (`%uFF01`..`%uFF5E`) to
   the ASCII characters they stand for, so `%uFF1C` decodes to `<`. Literal
   full-width characters in the input are left as they are. (#71)

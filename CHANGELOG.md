@@ -23,6 +23,11 @@ pins (see [`docs/conformance.md`](docs/conformance.md)).
   \\server\share\rules.conf` and `SecMarker \name` keep theirs too. A stray
   backslash outside a word is still ignored, now with a warning. (#79)
 
+### Performance
+
+- `@rx` answers a value that does not match without allocating capture
+  slots. (#91)
+
 ## [0.7.0] - 2026-11-21
 
 CRS conformance: 4,900 to 4,949 of 5,184 runnable cases.

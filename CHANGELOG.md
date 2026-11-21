@@ -23,6 +23,11 @@ pins (see [`docs/conformance.md`](docs/conformance.md)).
   \\server\share\rules.conf` and `SecMarker \name` keep theirs too. A stray
   backslash outside a word is still ignored, now with a warning. (#79)
 
+### Performance
+
+- A rule's message, tags and other metadata are collected when it
+  intervenes, not copied on every match. (#92)
+
 ## [0.7.0] - 2026-11-21
 
 CRS conformance: 4,900 to 4,949 of 5,184 runnable cases.

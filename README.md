@@ -39,7 +39,7 @@ a different thing: it wraps the C++ libmodsecurity.
 
 ```toml
 [dependencies]
-zentinel-modsec = "0.6"
+zentinel-modsec = "0.7"
 ```
 
 ```rust
@@ -188,9 +188,9 @@ skipped with a warning. Includes may nest up to 100 levels deep, and a file
 that includes itself, directly or through other files, is an error. If a parse
 fails, the parser retains the configuration it held before the call.
 
-**Changed after 0.6.0:** an `Include` of a literal path that does not exist is
+**Changed in 0.7.0:** an `Include` of a literal path that does not exist is
 now a load error. It used to be skipped silently. [`CHANGELOG.md`](CHANGELOG.md)
-lists the other changes since 0.6.0.
+lists the other changes in 0.7.0.
 
 **Operators:** `@rx`, `@pm`, `@pmf`, `@pmFromFile`, `@contains`, `@beginsWith`,
 `@endsWith`, `@streq`, `@within`, `@eq`, `@ne`, `@gt`, `@ge`, `@lt`, `@le`,
@@ -276,7 +276,7 @@ substitutes for the other.
 | Every chain link's `setvar` runs, captures fill `TX:0`..`TX:9`, collections iterate in insertion order, 0.6.0 ([#52](https://github.com/zentinelproxy/zentinel-modsec/pull/52), [#55](https://github.com/zentinelproxy/zentinel-modsec/pull/55)) | 4,900 |
 | `t:normalizePathWin` emits forward slashes ([#70](https://github.com/zentinelproxy/zentinel-modsec/pull/70)) | 4,944 |
 | `t:urlDecodeUni` folds full-width ASCII, `t:utf8toUnicode` encodes non-ASCII ([#71](https://github.com/zentinelproxy/zentinel-modsec/pull/71), [#72](https://github.com/zentinelproxy/zentinel-modsec/pull/72)) | 4,947 |
-| `ctl:ruleRemoveByTag`, `ctl:ruleRemoveTargetByTag`, `UNIQUE_ID` ([#67](https://github.com/zentinelproxy/zentinel-modsec/pull/67)) | 4,949 |
+| `ctl:ruleRemoveByTag`, `ctl:ruleRemoveTargetByTag`, `UNIQUE_ID`, 0.7.0 ([#67](https://github.com/zentinelproxy/zentinel-modsec/pull/67)) | 4,949 |
 
 Two of those were bypasses: the `+` encoding and the missing `=` each let a
 payload reach the application while the engine inspected nothing.
@@ -317,7 +317,7 @@ Minimum Rust: 1.94.1 (`rust-version` in `Cargo.toml`).
 ## Related
 
 - [`docs/`](docs/): [architecture](docs/architecture.md), [CRS conformance](docs/conformance.md) (running the gate, reading a count change, bumping CRS) and [ModSecurity v3 compatibility](docs/v3-compatibility.md) (known divergences and gaps)
-- [`CHANGELOG.md`](CHANGELOG.md): changes since 0.6.0, including behavior changes
+- [`CHANGELOG.md`](CHANGELOG.md): changes per release, including behavior changes
 - [ZentinelSec agent](https://registry.zentinelproxy.io/zentinelsec/): the Zentinel agent built on this engine
 - [OWASP CRS](https://coreruleset.org)
 - [libmodsecurity](https://github.com/owasp-modsecurity/ModSecurity): the reference C++ implementation

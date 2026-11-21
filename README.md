@@ -25,8 +25,10 @@
 
 `zentinel-modsec` parses ModSecurity `.conf` rule files and evaluates them
 against requests and responses, with no C or C++ dependency and no FFI
-(`#![deny(unsafe_code)]`). SQL injection and XSS detection (`@detectSQLi`,
-`@detectXSS`) are a pure Rust port of libinjection. CRS compatibility is
+(`#![deny(unsafe_code)]`). SQL injection detection (`@detectSQLi`) is a pure
+Rust port of libinjection v4.0.2, the version ModSecurity v3 uses, with the
+same verdicts; XSS detection (`@detectXSS`) is still an approximation of
+libinjection, not a port. CRS compatibility is
 reported as a number, not asserted: CI runs the CRS regression corpus on every
 push and fails if the pass count changes (see [CRS conformance](#crs-conformance)).
 
@@ -237,7 +239,7 @@ naming the rule IDs that must, or must not, appear in the log for a request.
 | | |
 |---|---|
 | Corpus | CRS `main` (4.31.0-dev), pinned commit in `.github/workflows/ci.yml` |
-| Passing | **4,949 of 5,184 runnable cases (95.5%)** (`MIN_PASSING`) |
+| Passing | **4,952 of 5,184 runnable cases (95.5%)** (`MIN_PASSING`) |
 
 ```bash
 mkdir -p test-rules
@@ -277,6 +279,7 @@ substitutes for the other.
 | `t:normalizePathWin` emits forward slashes ([#70](https://github.com/zentinelproxy/zentinel-modsec/pull/70)) | 4,944 |
 | `t:urlDecodeUni` folds full-width ASCII, `t:utf8toUnicode` encodes non-ASCII ([#71](https://github.com/zentinelproxy/zentinel-modsec/pull/71), [#72](https://github.com/zentinelproxy/zentinel-modsec/pull/72)) | 4,947 |
 | `ctl:ruleRemoveByTag`, `ctl:ruleRemoveTargetByTag`, `UNIQUE_ID`, 0.7.0 ([#67](https://github.com/zentinelproxy/zentinel-modsec/pull/67)) | 4,949 |
+| `@detectSQLi` ported from libinjection rather than approximated ([#84](https://github.com/zentinelproxy/zentinel-modsec/issues/84)) | 4,952 |
 
 Two of those were bypasses: the `+` encoding and the missing `=` each let a
 payload reach the application while the engine inspected nothing.

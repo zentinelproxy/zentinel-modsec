@@ -9,8 +9,18 @@ pins (see [`docs/conformance.md`](docs/conformance.md)).
 
 ## [Unreleased]
 
+CRS conformance: 4,949 to 4,952 of 5,184 runnable cases.
+
 ### Behavior changes
 
+- **`@detectSQLi` gives libinjection's verdict.** It used to be a set of
+  regular expressions and a small fingerprint list, which matched ordinary
+  crawler User-Agents (AhrefsBot, PetalBot, `meta-externalagent`, ...) under
+  CRS 942100 and missed some injections. It is now a port of libinjection
+  v4.0.2's SQLi detector: the same tokenizer, folding, fingerprint list and
+  false-positive filter, so the verdict and the reported fingerprint (`TX:0`)
+  match C libinjection. Some inputs that matched before no longer do, and some
+  that did not now do. (#84)
 - **Rules after a form feed, vertical tab or Unicode space are loaded.** Any
   whitespace character other than space, tab or carriage return between
   directives used to end the configuration silently, dropping every directive

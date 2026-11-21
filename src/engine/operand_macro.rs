@@ -5,7 +5,7 @@
 //! which macros that expansion cannot give the value libmodsecurity would.
 
 use once_cell::sync::Lazy;
-use regex::{Captures, Regex};
+use regex::Regex;
 
 static PATTERN: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"%\{([^}]+)\}").expect("static macro regex is valid"));
@@ -52,13 +52,32 @@ impl<'a> OperandMacro<'a> {
 /// Replace every macro in `arg` with what `resolve` returns for it. A macro
 /// the engine does not resolve becomes an empty string.
 pub(super) fn expand(arg: &str, resolve: impl Fn(OperandMacro) -> String) -> String {
-    PATTERN
-        .replace_all(arg, |caps: &Captures| {
-            OperandMacro::parse(&caps[1])
-                .map(&resolve)
-                .unwrap_or_default()
-        })
-        .into_owned()
+    // Scans for what `PATTERN` matches, `%{` then one or more non-`}` then
+    // `}`, without running the regex on every evaluation.
+    let mut expanded = String::with_capacity(arg.len());
+    let mut rest = arg;
+    while let Some(start) = rest.find("%{") {
+        let body = &rest[start + 2..];
+        match body.find('}') {
+            // `%{}` names nothing and is not a macro: keep the `%` and look
+            // for the next opening after it.
+            Some(0) => {
+                expanded.push_str(&rest[..=start]);
+                rest = &rest[start + 1..];
+            }
+            Some(end) => {
+                expanded.push_str(&rest[..start]);
+                if let Some(operand) = OperandMacro::parse(&body[..end]) {
+                    expanded.push_str(&resolve(operand));
+                }
+                rest = &body[end + 1..];
+            }
+            // No closing brace is left, so nothing after this can match.
+            None => break,
+        }
+    }
+    expanded.push_str(rest);
+    expanded
 }
 
 /// The macros in `arg` whose value in libmodsecurity [`expand`] cannot
@@ -73,4 +92,51 @@ pub(super) fn unresolvable(arg: &str) -> impl Iterator<Item = &str> {
         )
         .then_some(written)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use regex::Captures;
+
+    fn resolve(operand: OperandMacro) -> String {
+        match operand {
+            OperandMacro::MatchedVar => "<mv>".to_string(),
+            OperandMacro::MatchedVarName => "<mvn>".to_string(),
+            OperandMacro::Tx(name) => format!("<tx:{name}>"),
+            OperandMacro::Bare(name) => format!("<bare:{name}>"),
+            OperandMacro::RequestHeader(name) => format!("<h:{name}>"),
+        }
+    }
+
+    /// `expand` replaces exactly what `PATTERN` matches.
+    #[test]
+    fn expand_replaces_what_the_macro_pattern_matches() {
+        for arg in [
+            "",
+            "plain",
+            "%{tx.a}",
+            "%{REMOTE_PORT}",
+            "x%{tx.a}y%{MATCHED_VAR}z",
+            "%{request_headers.host}%{matched_var_name}",
+            "%{env.x} and %{tx.b}",
+            "%{}",
+            "%{}%{tx.a}",
+            "%{}}%{tx.a}",
+            "%{%{tx.a}",
+            "%{tx.a",
+            "%{tx.a}%{",
+            "%%{tx.a}}",
+            "100%",
+            "%{a\nb}",
+            "%{tx.é}é%{}",
+        ] {
+            let reference = PATTERN.replace_all(arg, |caps: &Captures| {
+                OperandMacro::parse(&caps[1])
+                    .map(resolve)
+                    .unwrap_or_default()
+            });
+            assert_eq!(expand(arg, resolve), reference, "argument {arg:?}");
+        }
+    }
 }

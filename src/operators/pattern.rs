@@ -84,6 +84,12 @@ impl Operator for RxOperator {
             return OperatorResult::no_match();
         };
 
+        // Most values do not match. `is_match` answers that without building
+        // capture slots, which `captures` allocates before it searches.
+        if !regex.is_match(value) {
+            return OperatorResult::no_match();
+        }
+
         if let Some(captures) = regex.captures(value) {
             let matched_value = captures.get(0).map(|m| m.as_str().to_string());
             let capture_groups: Vec<String> = captures

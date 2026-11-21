@@ -25,8 +25,10 @@
 
 `zentinel-modsec` parses ModSecurity `.conf` rule files and evaluates them
 against requests and responses, with no C or C++ dependency and no FFI
-(`#![deny(unsafe_code)]`). SQL injection and XSS detection (`@detectSQLi`,
-`@detectXSS`) are a pure Rust port of libinjection. CRS compatibility is
+(`#![deny(unsafe_code)]`). SQL injection detection (`@detectSQLi`) is a pure
+Rust port of libinjection v4.0.2, the version ModSecurity v3 uses, with the
+same verdicts; XSS detection (`@detectXSS`) is still an approximation of
+libinjection, not a port. CRS compatibility is
 reported as a number, not asserted: CI runs the CRS regression corpus on every
 push and fails if the pass count changes (see [CRS conformance](#crs-conformance)).
 

@@ -10,8 +10,8 @@ use super::phase::Phase;
 use super::ruleset::{CompiledRule, CompiledRuleset, RuleEngineMode};
 use super::scoring::ANOMALY_SCORE;
 use crate::actions::{
-    execute_actions, ActionResult, DisruptiveOutcome, FlowOutcome, SetVarOp as RuleSetVar,
-    SetVarOperation,
+    execute_actions_without_metadata, rule_metadata, ActionResult, DisruptiveOutcome, FlowOutcome,
+    SetVarOp as RuleSetVar, SetVarOperation,
 };
 use crate::error::Result;
 use crate::operators::{compile_operator, Operator};
@@ -514,7 +514,8 @@ impl Transaction {
         let mut chain_state = ChainState::new();
         // A chain is one logical rule: the starter's actions fire only when
         // every link matches, so they are held here until the chain completes.
-        let mut pending_chain_actions: Option<ActionResult> = None;
+        // Held with the starter itself, whose metadata an intervention reports.
+        let mut pending_chain_actions: Option<(ActionResult, &CompiledRule)> = None;
         let mut pending_chain_id: Option<String> = None;
         // What each link matched, held with the starter's id: a chain that
         // fails part-way did not match, so it leaves nothing in matched_data.
@@ -604,7 +605,7 @@ impl Transaction {
                 self.matched_vars.clear();
 
                 // Execute actions
-                let mut action_result = execute_actions(&rule.actions, None, &captures);
+                let mut action_result = execute_actions_without_metadata(&rule.actions, None);
                 let setvar_ops = std::mem::take(&mut action_result.setvar_ops);
                 let capture = rule
                     .actions
@@ -665,8 +666,8 @@ impl Transaction {
                     if !chain_state.in_chain {
                         chain_state.start_chain(idx);
                         pending_chain_id = rule.id.clone();
-                        pending_chain_actions = Some(action_result);
-                    } else if let Some(held) = pending_chain_actions.as_mut() {
+                        pending_chain_actions = Some((action_result, rule));
+                    } else if let Some((held, _)) = pending_chain_actions.as_mut() {
                         // A middle link: its ctl runs with the chain.
                         held.control_ops.extend(action_result.control_ops);
                     }
@@ -679,25 +680,25 @@ impl Transaction {
                 // has now matched in full. A completed chain keeps the
                 // starter's disruptive action, flow and metadata, and runs the
                 // ctl of every link.
-                let action_result = if chain_state.in_chain {
+                let (action_result, metadata_rule) = if chain_state.in_chain {
                     chain_state.reset();
                     if let Some(id) = pending_chain_id.take() {
                         self.matched_rules.push(id);
                     }
                     self.matched_data.append(&mut pending_chain_data);
                     match pending_chain_actions.take() {
-                        Some(mut held) => {
+                        Some((mut held, starter)) => {
                             held.control_ops.extend(action_result.control_ops);
-                            held
+                            (held, starter)
                         }
-                        None => action_result,
+                        None => (action_result, rule),
                     }
                 } else {
                     // Track matched rule
                     if let Some(ref id) = rule.id {
                         self.matched_rules.push(id.clone());
                     }
-                    action_result
+                    (action_result, rule)
                 };
 
                 // Apply ctl: overrides before the disruptive action below, so
@@ -734,7 +735,7 @@ impl Transaction {
                             if should_block {
                                 let mut intervention =
                                     Intervention::deny(status, phase, rule.id.clone());
-                                intervention.add_metadata(action_result.metadata);
+                                intervention.add_metadata(rule_metadata(&metadata_rule.actions));
                                 self.intervention = Some(intervention);
                                 return Ok(());
                             }
@@ -743,7 +744,7 @@ impl Transaction {
                             if should_block {
                                 let mut intervention =
                                     Intervention::deny(self.default_status, phase, rule.id.clone());
-                                intervention.add_metadata(action_result.metadata);
+                                intervention.add_metadata(rule_metadata(&metadata_rule.actions));
                                 self.intervention = Some(intervention);
                                 return Ok(());
                             }
@@ -756,7 +757,7 @@ impl Transaction {
                             if should_block {
                                 let mut intervention =
                                     Intervention::redirect(url, phase, rule.id.clone());
-                                intervention.add_metadata(action_result.metadata);
+                                intervention.add_metadata(rule_metadata(&metadata_rule.actions));
                                 self.intervention = Some(intervention);
                                 return Ok(());
                             }
@@ -764,7 +765,7 @@ impl Transaction {
                         DisruptiveOutcome::Drop => {
                             if should_block {
                                 let mut intervention = Intervention::drop(phase, rule.id.clone());
-                                intervention.add_metadata(action_result.metadata);
+                                intervention.add_metadata(rule_metadata(&metadata_rule.actions));
                                 self.intervention = Some(intervention);
                                 return Ok(());
                             }
@@ -909,18 +910,17 @@ impl Transaction {
         // which for an operand the engine cannot resolve is one that never
         // matches.
         let dynamic_operator;
-        let operator: &dyn Operator =
-            if !rule.operand_unresolvable && rule.operator_spec.argument.contains("%{") {
-                let expanded = self.expand_operator_macros(&rule.operator_spec.argument);
-                dynamic_operator = compile_operator(&OperatorSpec {
-                    negated: rule.operator_spec.negated,
-                    name: rule.operator_spec.name,
-                    argument: expanded,
-                })?;
-                dynamic_operator.as_ref()
-            } else {
-                rule.operator.as_ref()
-            };
+        let operator: &dyn Operator = if !rule.operand_unresolvable && rule.operand_has_macro {
+            let expanded = self.expand_operator_macros(&rule.operator_spec.argument);
+            dynamic_operator = compile_operator(&OperatorSpec {
+                negated: rule.operator_spec.negated,
+                name: rule.operator_spec.name,
+                argument: expanded,
+            })?;
+            dynamic_operator.as_ref()
+        } else {
+            rule.operator.as_ref()
+        };
 
         // Apply transformations and match every value
         let mut matches = Vec::new();
@@ -971,7 +971,7 @@ impl Transaction {
                 .last()
                 .map(|(n, _)| n.clone())
                 .unwrap_or_default(),
-            OperandMacro::Tx(name) => self
+            OperandMacro::Tx(name) | OperandMacro::Bare(name) => self
                 .tx
                 .get(name)
                 .and_then(|v| v.first().map(|s| s.to_string()))

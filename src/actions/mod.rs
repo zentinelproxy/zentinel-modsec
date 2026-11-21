@@ -133,10 +133,35 @@ pub fn execute_actions(
     matched_value: Option<&str>,
     captures: &[String],
 ) -> ActionResult {
-    let mut result = ActionResult {
-        captures: captures.to_vec(),
-        ..Default::default()
-    };
+    let mut result = execute_actions_without_metadata(actions, matched_value);
+    result.captures = captures.to_vec();
+    result.metadata = rule_metadata(actions);
+    result
+}
+
+/// The metadata a rule's actions carry: `id`, `msg`, `tag` and the rest.
+pub fn rule_metadata(actions: &[Action]) -> RuleMetadata {
+    let mut metadata = RuleMetadata::default();
+    for action in actions {
+        match action {
+            Action::Metadata(m) => execute_metadata(m, &mut metadata),
+            Action::Logging(l) => execute_logging(l, &mut metadata),
+            _ => {}
+        }
+    }
+    metadata
+}
+
+/// Execute actions, leaving [`ActionResult::metadata`] empty.
+///
+/// Metadata is only read when a rule intervenes, and copying a rule's message
+/// and tags for every match costs more than the rest of this function.
+/// [`rule_metadata`] collects it when it is wanted.
+pub fn execute_actions_without_metadata(
+    actions: &[Action],
+    matched_value: Option<&str>,
+) -> ActionResult {
+    let mut result = ActionResult::default();
 
     for action in actions {
         match action {
@@ -149,11 +174,8 @@ pub fn execute_actions(
             Action::Data(d) => {
                 execute_data(d, &mut result, matched_value);
             }
-            Action::Metadata(m) => {
-                execute_metadata(m, &mut result.metadata);
-            }
-            Action::Logging(l) => {
-                execute_logging(l, &mut result.metadata);
+            Action::Metadata(_) | Action::Logging(_) => {
+                // Collected by `rule_metadata`.
             }
             Action::Control(ctl) => {
                 // Applied by the transaction after this returns: ctl: changes

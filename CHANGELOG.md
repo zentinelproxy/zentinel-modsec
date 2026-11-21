@@ -32,6 +32,22 @@ CRS conformance: 4,949 to 4,952 of 5,184 runnable cases.
   \.php$` compiled `.php$` and now compiles `\.php$`; `Include
   \\server\share\rules.conf` and `SecMarker \name` keep theirs too. A stray
   backslash outside a word is still ignored, now with a warning. (#79)
+- **A numeric operator with a bare macro name never matches.** `@gt
+  %{REMOTE_PORT}` was expanded as `tx.REMOTE_PORT` and compared against 0. v3
+  reads a bare name as the variable, which the engine cannot resolve in an
+  operand, so `@eq`, `@gt`, `@lt`, `@ge` and `@le` with a bare name other than
+  `MATCHED_VAR` or `MATCHED_VAR_NAME` are handled like a macro on an
+  unresolvable collection: no match, and one load warning per macro. Other
+  operators and `setvar` still read a bare name from TX. (#87)
+
+### Performance
+
+- `@rx` answers a value that does not match without allocating capture
+  slots. (#91)
+- A rule's message, tags and other metadata are collected when it
+  intervenes, not copied on every match. (#92)
+- `%{...}` macros in operands and `setvar` are expanded without running a
+  regex, and whether an operand holds one is decided at load. (#93)
 
 ## [0.7.0] - 2026-11-21
 

@@ -239,7 +239,7 @@ naming the rule IDs that must, or must not, appear in the log for a request.
 | | |
 |---|---|
 | Corpus | CRS `main` (4.31.0-dev), pinned commit in `.github/workflows/ci.yml` |
-| Passing | **4,952 of 5,184 runnable cases (95.5%)** (`MIN_PASSING`) |
+| Passing | **4,969 of 5,184 runnable cases (95.9%)** (`MIN_PASSING`) |
 
 ```bash
 mkdir -p test-rules
@@ -280,6 +280,7 @@ substitutes for the other.
 | `t:urlDecodeUni` folds full-width ASCII, `t:utf8toUnicode` encodes non-ASCII ([#71](https://github.com/zentinelproxy/zentinel-modsec/pull/71), [#72](https://github.com/zentinelproxy/zentinel-modsec/pull/72)) | 4,947 |
 | `ctl:ruleRemoveByTag`, `ctl:ruleRemoveTargetByTag`, `UNIQUE_ID`, 0.7.0 ([#67](https://github.com/zentinelproxy/zentinel-modsec/pull/67)) | 4,949 |
 | `@detectSQLi` ported from libinjection rather than approximated ([#84](https://github.com/zentinelproxy/zentinel-modsec/issues/84)) | 4,952 |
+| Regex key selections compare keys case-insensitively, as in v3 ([#83](https://github.com/zentinelproxy/zentinel-modsec/pull/83)) | 4,969 |
 
 Two of those were bypasses: the `+` encoding and the missing `=` each let a
 payload reach the application while the engine inspected nothing.

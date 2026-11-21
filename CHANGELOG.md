@@ -48,6 +48,8 @@ CRS conformance: 4,949 to 4,952 of 5,184 runnable cases.
   intervenes, not copied on every match. (#92)
 - `%{...}` macros in operands and `setvar` are expanded without running a
   regex, and whether an operand holds one is decided at load. (#93)
+- Rule targets are resolved without copying each variable's name and
+  value; a name is rendered only for a value that matches. (#94)
 
 ## [0.7.0] - 2026-11-21
 

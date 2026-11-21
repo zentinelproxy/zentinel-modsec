@@ -1,5 +1,7 @@
 //! Transaction processing for ModSecurity.
 
+use std::borrow::Cow;
+use std::fmt;
 use std::sync::Arc;
 
 use super::chain::ChainState;
@@ -15,8 +17,10 @@ use crate::actions::{
 };
 use crate::error::Result;
 use crate::operators::{compile_operator, Operator};
-use crate::parser::{Action, DataAction, OperatorSpec};
-use crate::variables::{Collection, RequestData, ResponseData, TxCollection, VariableResolver};
+use crate::parser::{Action, DataAction, OperatorSpec, VariableName};
+use crate::variables::{
+    Collection, RequestData, ResolvedName, ResponseData, TxCollection, VariableResolver,
+};
 
 /// Whether a lowercased Content-Type denotes a JSON body.
 ///
@@ -83,6 +87,23 @@ struct MatchedVariable {
     name: String,
     value: String,
     portion: Option<String>,
+}
+
+/// The name of a value a rule tests, rendered only when the value matches.
+enum TargetName<'a> {
+    /// A resolved variable value.
+    Value(ResolvedName<'a>),
+    /// The count of a `&VARIABLE` target.
+    Count(VariableName),
+}
+
+impl fmt::Display for TargetName<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Value(name) => name.fmt(f),
+            Self::Count(variable) => write!(f, "&{variable:?}"),
+        }
+    }
 }
 
 /// One variable value a rule's operator matched.
@@ -834,30 +855,40 @@ impl Transaction {
         let filter_by_tag = self.controls.has_tag_target_removals(rule.tags());
         let filter_targets = filter_by_id || filter_by_tag;
 
-        let mut all_values = Vec::new();
+        let mut all_values: Vec<(TargetName<'_>, Cow<'_, str>)> = Vec::new();
         let mut any_excluded = false;
         for spec in &rule.variables {
-            let mut resolved = resolver.resolve(spec);
+            let mut resolved = resolver.resolve_borrowed(spec);
             if filter_targets {
                 let before = resolved.len();
                 resolved.retain(|(name, _)| {
-                    !(filter_by_id
+                    // Rendered only for a rule a `ctl:` target exclusion names.
+                    let name = &name.to_string();
+                    let removed_by_id = filter_by_id
                         && self
                             .controls
-                            .is_target_removed(rule.id.as_deref(), spec, name))
-                        && !(filter_by_tag
-                            && self
-                                .controls
-                                .is_target_removed_by_tag(rule.tags(), spec, name))
+                            .is_target_removed(rule.id.as_deref(), spec, name);
+                    let removed_by_tag = filter_by_tag
+                        && self
+                            .controls
+                            .is_target_removed_by_tag(rule.tags(), spec, name);
+                    !removed_by_id && !removed_by_tag
                 });
                 any_excluded |= resolved.len() != before;
             }
             if spec.count_mode {
                 // An exclusion reduces the count, which is what a rule like
                 // `SecRule &ARGS:x "@eq 0"` is asking about.
-                all_values.push((format!("&{:?}", spec.name), resolved.len().to_string()));
+                all_values.push((
+                    TargetName::Count(spec.name),
+                    Cow::Owned(resolved.len().to_string()),
+                ));
             } else {
-                all_values.extend(resolved);
+                all_values.extend(
+                    resolved
+                        .into_iter()
+                        .map(|(name, value)| (TargetName::Value(name), value)),
+                );
             }
         }
 
@@ -936,7 +967,7 @@ impl Transaction {
 
             if final_match {
                 let matched = MatchedVariable {
-                    name,
+                    name: name.to_string(),
                     // ModSecurity's MATCHED_VAR is the *variable's* value, not
                     // the portion the operator hit. The portion is reported
                     // separately, since an audit log wants both: the value to

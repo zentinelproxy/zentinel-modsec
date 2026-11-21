@@ -30,6 +30,11 @@ pins (see [`docs/conformance.md`](docs/conformance.md)).
   unresolvable collection: no match, and one load warning per macro. Other
   operators and `setvar` still read a bare name from TX. (#87)
 
+### Performance
+
+- `@rx` answers a value that does not match without allocating capture
+  slots. (#91)
+
 ## [0.7.0] - 2026-11-21
 
 CRS conformance: 4,900 to 4,949 of 5,184 runnable cases.

@@ -30,6 +30,11 @@ pins (see [`docs/conformance.md`](docs/conformance.md)).
   unresolvable collection: no match, and one load warning per macro. Other
   operators and `setvar` still read a bare name from TX. (#87)
 
+### Performance
+
+- `%{...}` macros in operands and `setvar` are expanded without running a
+  regex, and whether an operand holds one is decided at load. (#93)
+
 ## [0.7.0] - 2026-11-21
 
 CRS conformance: 4,900 to 4,949 of 5,184 runnable cases.

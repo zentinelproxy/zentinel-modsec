@@ -104,6 +104,7 @@ mod tests {
             OperandMacro::MatchedVar => "<mv>".to_string(),
             OperandMacro::MatchedVarName => "<mvn>".to_string(),
             OperandMacro::Tx(name) => format!("<tx:{name}>"),
+            OperandMacro::Bare(name) => format!("<bare:{name}>"),
             OperandMacro::RequestHeader(name) => format!("<h:{name}>"),
         }
     }
@@ -115,6 +116,7 @@ mod tests {
             "",
             "plain",
             "%{tx.a}",
+            "%{REMOTE_PORT}",
             "x%{tx.a}y%{MATCHED_VAR}z",
             "%{request_headers.host}%{matched_var_name}",
             "%{env.x} and %{tx.b}",

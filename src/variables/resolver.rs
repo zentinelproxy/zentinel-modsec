@@ -73,7 +73,14 @@ fn cached_regex(pattern: &str) -> Option<Regex> {
     if let Some(hit) = CACHE.read().unwrap_or_else(|e| e.into_inner()).get(pattern) {
         return hit.clone();
     }
-    let compiled = Regex::new(pattern).ok();
+    // Case-insensitive, as a key selection is: collection keys are, in
+    // ModSecurity, and TX keys are stored lowercased, so CRS's 922110 reading
+    // `TX:/MULTIPART_HEADERS_CONTENT_TYPES_*/` found none of the keys its
+    // 922150 sets.
+    let compiled = regex::RegexBuilder::new(pattern)
+        .case_insensitive(true)
+        .build()
+        .ok();
     CACHE
         .write()
         .unwrap_or_else(|e| e.into_inner())

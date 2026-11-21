@@ -1,8 +1,8 @@
 <p align="center">
   <a href="https://zentinelproxy.io">
     <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/zentinelproxy/design/main/marks/lockup/zentinel-lockup-dark.svg">
-      <img alt="Zentinel" src="https://raw.githubusercontent.com/zentinelproxy/design/main/marks/lockup/zentinel-lockup-light.svg" height="52">
+      <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/zentinelproxy/design/main/marks/banner/zentinel-modsec-banner-on-dark.svg">
+      <img alt="Zentinel ModSecurity engine" src="https://raw.githubusercontent.com/zentinelproxy/design/main/marks/banner/zentinel-modsec-banner-on-light.svg" height="64">
     </picture>
   </a>
 </p>

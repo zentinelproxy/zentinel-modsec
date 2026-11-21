@@ -167,9 +167,11 @@ pub struct SetVarEffect {
 impl Transaction {
     /// Create a new transaction.
     pub fn new(ruleset: Arc<CompiledRuleset>, default_status: u16) -> Self {
+        let mut request = RequestData::new();
+        request.unique_id = generate_unique_id();
         Self {
             ruleset,
-            request: RequestData::new(),
+            request,
             response: ResponseData::new(),
             tx: TxCollection::new(),
             phase: Phase::RequestHeaders,
@@ -183,6 +185,36 @@ impl Transaction {
             matched_data: Vec::new(),
             setvar_effects: Vec::new(),
             record_setvar_effects: false,
+        }
+    }
+
+    /// The identifier of this transaction, backing `UNIQUE_ID`.
+    ///
+    /// Generated when the transaction is created; see
+    /// [`set_unique_id`](Self::set_unique_id) to use the embedding
+    /// application's own request ID instead.
+    pub fn unique_id(&self) -> &str {
+        &self.request.unique_id
+    }
+
+    /// Replace the generated `UNIQUE_ID` with the caller's own request ID,
+    /// so that rule logs and the application's logs share one identifier.
+    ///
+    /// Call it before processing the request: rules already evaluated have
+    /// seen the previous value. An empty `id` is ignored.
+    ///
+    /// # Security
+    ///
+    /// The ID must not be under the client's control: do not pass a request
+    /// header such as `X-Request-ID` taken as received. CRS derives its
+    /// sampling decision from `UNIQUE_ID` (rule 901410), so with
+    /// `tx.sampling_percentage` below 100 a client that chooses the ID can
+    /// pick values that fall outside the sample and skip the CRS entirely.
+    /// Use an ID the application or proxy generated itself, and that differs
+    /// between requests.
+    pub fn set_unique_id(&mut self, id: &str) {
+        if !id.is_empty() {
+            self.request.unique_id = id.to_string();
         }
     }
 
@@ -522,10 +554,13 @@ impl Transaction {
 
             let rule = &rules[idx];
 
-            // ctl:ruleRemoveById excluded this rule for this transaction. Skip
-            // it as though it were not in the ruleset -- including its chain
-            // links, which cannot fire without their starter.
-            if self.controls.is_rule_removed(rule.id.as_deref()) {
+            // ctl:ruleRemoveById or ctl:ruleRemoveByTag excluded this rule for
+            // this transaction. Skip it as though it were not in the ruleset --
+            // including its chain links, which cannot fire without their
+            // starter.
+            if self.controls.is_rule_removed(rule.id.as_deref())
+                || self.controls.is_rule_removed_by_tag(rule.tags())
+            {
                 if rule.is_chain {
                     chain_state.reset();
                     pending_chain_actions = None;
@@ -789,11 +824,13 @@ impl Transaction {
         // and is what CRS's `SecRule &TX:x "@eq 0"` initialization relies on.
         // Emitting a value even for an absent count also keeps the spec out of
         // the "resolved to nothing" early-return below, so `&x "@eq 0"` matches.
-        // ctl:ruleRemoveTargetById drops individual targets from this rule for
-        // this transaction. The check is hoisted so rules with no exclusion --
-        // effectively all of them -- pay one comparison rather than a scan per
-        // variable.
-        let filter_targets = self.controls.has_target_removals(rule.id.as_deref());
+        // ctl:ruleRemoveTargetById and ctl:ruleRemoveTargetByTag drop
+        // individual targets from this rule for this transaction. Both checks
+        // are hoisted so rules with no exclusion -- effectively all of them --
+        // pay one comparison rather than a scan per variable.
+        let filter_by_id = self.controls.has_target_removals(rule.id.as_deref());
+        let filter_by_tag = self.controls.has_tag_target_removals(rule.tags());
+        let filter_targets = filter_by_id || filter_by_tag;
 
         let mut all_values = Vec::new();
         let mut any_excluded = false;
@@ -802,9 +839,14 @@ impl Transaction {
             if filter_targets {
                 let before = resolved.len();
                 resolved.retain(|(name, _)| {
-                    !self
-                        .controls
-                        .is_target_removed(rule.id.as_deref(), spec, name)
+                    !(filter_by_id
+                        && self
+                            .controls
+                            .is_target_removed(rule.id.as_deref(), spec, name))
+                        && !(filter_by_tag
+                            && self
+                                .controls
+                                .is_target_removed_by_tag(rule.tags(), spec, name))
                 });
                 any_excluded |= resolved.len() != before;
             }
@@ -1099,6 +1141,42 @@ impl std::fmt::Debug for Transaction {
             .field("matched_rules", &self.matched_rules)
             .finish()
     }
+}
+
+/// A fresh identifier for a new transaction, backing `UNIQUE_ID`.
+///
+/// Three parts: the creation time in microseconds, so IDs stay distinct
+/// across restarts; a process-wide sequence number, so two transactions
+/// created in the same microsecond still differ; and a random part, so the
+/// value cannot be predicted. CRS hashes it to decide which requests fall
+/// inside its sampling percentage (rule 901410), and a client able to
+/// predict it could choose to fall outside the sample.
+///
+/// The random part comes from the standard library's per-process hash seed,
+/// which avoids a dependency on a random number crate for a value that does
+/// not need to be cryptographically strong.
+fn generate_unique_id() -> String {
+    use std::collections::hash_map::RandomState;
+    use std::hash::{BuildHasher, Hasher};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+    let seq = SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    let mut hasher = RandomState::new().build_hasher();
+    hasher.write_u64(seq);
+    hasher.write_u128(now.as_nanos());
+    format!(
+        "{}{:06}-{:x}-{:016x}",
+        now.as_secs(),
+        now.subsec_micros(),
+        seq,
+        hasher.finish()
+    )
 }
 
 #[cfg(test)]

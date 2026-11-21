@@ -2,7 +2,7 @@
 //!
 //! What a macro may name is decided here and nowhere else: the transaction
 //! expands with [`expand`], and the ruleset asks [`unresolvable`] at load time
-//! which macros that expansion will leave empty.
+//! which macros that expansion cannot give the value libmodsecurity would.
 
 use once_cell::sync::Lazy;
 use regex::{Captures, Regex};
@@ -16,8 +16,11 @@ pub(super) enum OperandMacro<'a> {
     MatchedVar,
     /// `%{MATCHED_VAR_NAME}`.
     MatchedVarName,
-    /// `%{tx.<name>}`, or a bare `%{<name>}`.
+    /// `%{tx.<name>}`.
     Tx(&'a str),
+    /// A bare `%{<name>}`, expanded as `tx.<name>`. libmodsecurity reads it
+    /// as the variable of that name instead, which is not resolved here.
+    Bare(&'a str),
     /// `%{request_headers.<name>}` (CRS 943110: `!@endsWith
     /// %{request_headers.host}`).
     RequestHeader(&'a str),
@@ -34,7 +37,7 @@ impl<'a> OperandMacro<'a> {
             return Some(Self::MatchedVarName);
         }
         let Some((collection, name)) = inner.split_once('.') else {
-            return Some(Self::Tx(inner));
+            return Some(Self::Bare(inner));
         };
         if collection.eq_ignore_ascii_case("tx") {
             Some(Self::Tx(name))
@@ -58,11 +61,16 @@ pub(super) fn expand(arg: &str, resolve: impl Fn(OperandMacro) -> String) -> Str
         .into_owned()
 }
 
-/// The macros in `arg` that [`expand`] replaces with an empty string whatever
-/// the transaction holds, as written (`%{env.MAX_LEN}`).
+/// The macros in `arg` whose value in libmodsecurity [`expand`] cannot
+/// produce, as written: one on a collection it leaves empty
+/// (`%{env.MAX_LEN}`), or a bare variable name (`%{REMOTE_PORT}`).
 pub(super) fn unresolvable(arg: &str) -> impl Iterator<Item = &str> {
     PATTERN.captures_iter(arg).filter_map(|caps| {
         let (written, [inner]) = caps.extract();
-        OperandMacro::parse(inner).is_none().then_some(written)
+        matches!(
+            OperandMacro::parse(inner),
+            None | Some(OperandMacro::Bare(_))
+        )
+        .then_some(written)
     })
 }

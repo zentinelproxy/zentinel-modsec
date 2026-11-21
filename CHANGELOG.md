@@ -22,6 +22,13 @@ pins (see [`docs/conformance.md`](docs/conformance.md)).
   \.php$` compiled `.php$` and now compiles `\.php$`; `Include
   \\server\share\rules.conf` and `SecMarker \name` keep theirs too. A stray
   backslash outside a word is still ignored, now with a warning. (#79)
+- **A numeric operator with a bare macro name never matches.** `@gt
+  %{REMOTE_PORT}` was expanded as `tx.REMOTE_PORT` and compared against 0. v3
+  reads a bare name as the variable, which the engine cannot resolve in an
+  operand, so `@eq`, `@gt`, `@lt`, `@ge` and `@le` with a bare name other than
+  `MATCHED_VAR` or `MATCHED_VAR_NAME` are handled like a macro on an
+  unresolvable collection: no match, and one load warning per macro. Other
+  operators and `setvar` still read a bare name from TX. (#87)
 
 ## [0.7.0] - 2026-11-21
 

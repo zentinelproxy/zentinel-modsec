@@ -35,6 +35,11 @@ pins (see [`docs/conformance.md`](docs/conformance.md)).
 - `@rx` answers a value that does not match without allocating capture
   slots. (#91)
 
+### Performance
+
+- A rule's message, tags and other metadata are collected when it
+  intervenes, not copied on every match. (#92)
+
 ## [0.7.0] - 2026-11-21
 
 CRS conformance: 4,900 to 4,949 of 5,184 runnable cases.

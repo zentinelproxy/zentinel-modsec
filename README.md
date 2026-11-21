@@ -180,6 +180,16 @@ async fn waf(
 `SecRequestBodyLimit`, `SecResponseBodyLimit`, `Include`. Other directives are
 logged and skipped.
 
+A relative `Include` is tried as given, relative to the working directory, and
+then beside the declaring file, as in ModSecurity v3. A glob with no matches is
+allowed, and a match that cannot be read, such as a dangling symlink, is
+skipped with a warning. Includes may nest up to 100 levels deep, and a file
+that includes itself, directly or through other files, is an error. If a parse
+fails, the parser retains the configuration it held before the call.
+
+**Changed after 0.6.0:** an `Include` of a literal path that does not exist is
+now a load error. It used to be skipped silently.
+
 **Operators:** `@rx`, `@pm`, `@pmf`, `@pmFromFile`, `@contains`, `@beginsWith`,
 `@endsWith`, `@streq`, `@within`, `@eq`, `@ne`, `@gt`, `@ge`, `@lt`, `@le`,
 `@detectSQLi`, `@detectXSS`, `@ipMatch`, `@ipMatchFromFile`,
@@ -207,8 +217,12 @@ does not expand entities. XPath is not supported: `XML:/*` and `XML://@*`
 (every `XML:` target in stock CRS) resolve against the flattened body, and
 richer XPath expressions are reported when the rules load.
 
-**Not implemented:** `UNIQUE_ID` and `FILES_COMBINED_SIZE`; rules that target
-only those are inert and reported at load time.
+**Transaction and uploads:** `UNIQUE_ID` is generated for each transaction
+(`Transaction::set_unique_id` replaces it with the application's own request
+ID). `FILES_SIZES` and `FILES_COMBINED_SIZE` are measured in bytes by the
+multipart processor. `REQUEST_BODY` always holds the raw body, whichever
+processor ran, so `ctl:forceRequestBodyVariable` is accepted and has nothing
+left to do.
 
 ## CRS conformance
 
@@ -221,7 +235,7 @@ naming the rule IDs that must, or must not, appear in the log for a request.
 | | |
 |---|---|
 | Corpus | CRS `main` (4.31.0-dev), pinned commit in `.github/workflows/ci.yml` |
-| Passing | **4,900 of 5,184 runnable cases (94.5%)** (`MIN_PASSING`) |
+| Passing | **4,949 of 5,184 runnable cases (95.5%)** (`MIN_PASSING`) |
 
 ```bash
 mkdir -p test-rules

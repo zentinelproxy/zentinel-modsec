@@ -3,6 +3,7 @@
 pub mod chain;
 pub mod control;
 pub mod intervention;
+mod operand_macro;
 pub mod phase;
 pub mod ruleset;
 pub mod scoring;

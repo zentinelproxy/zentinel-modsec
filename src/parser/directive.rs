@@ -19,6 +19,10 @@ pub enum Directive {
     SecDefaultAction(Vec<Action>),
     /// SecRuleRemoveById directive - remove rules by ID or ID range.
     SecRuleRemoveById(Vec<RuleIdSelector>),
+    /// SecRuleRemoveByTag directive - remove rules carrying this exact tag.
+    SecRuleRemoveByTag(String),
+    /// SecRuleRemoveByMsg directive - remove rules with this exact message.
+    SecRuleRemoveByMsg(String),
     /// SecRuleUpdateTargetById directive - update rule targets (CRS exclusions).
     SecRuleUpdateTargetById(UpdateTargetById),
     /// SecRuleUpdateActionById directive - update rule actions.

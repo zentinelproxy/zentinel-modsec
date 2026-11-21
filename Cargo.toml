@@ -28,6 +28,9 @@ regex = "1.10"
 # load error while compilation itself stays lazy.
 regex-syntax = "0.8"
 aho-corasick = "1.1"
+# Substring search over raw bytes (multipart boundaries). Already in the tree
+# through regex and aho-corasick.
+memchr = "2.7"
 
 # IP address matching
 ipnetwork = "0.21"

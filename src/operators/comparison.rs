@@ -114,42 +114,63 @@ impl Operator for StreqOperator {
     }
 }
 
+/// The integer a numeric operator reads from an operand.
+///
+/// libmodsecurity converts both the input and the operator argument with
+/// `atoll` (`operators/gt.cc`, `lt.cc`, `ge.cc`, `le.cc`) or with `stoi`,
+/// taking 0 if it throws (`operators/eq.cc`): leading whitespace is skipped,
+/// a sign belongs to the number, and conversion stops at the first byte that
+/// is not a digit. So an empty or non-numeric operand is 0 and `7abc` is 7,
+/// and the comparison always takes place.
+///
+/// A value outside the 64-bit range saturates, as glibc's `atoll` does. (For
+/// `@eq` this is wider than `stoi`, which is 32-bit and gives 0 beyond that.)
+fn leading_integer(operand: &str) -> i64 {
+    let bytes = operand.as_bytes();
+    // C's `isspace`: space, and `\t` `\n` `\v` `\f` `\r`.
+    let mut rest = &bytes[bytes
+        .iter()
+        .take_while(|b| matches!(b, b' ' | b'\t'..=b'\r'))
+        .count()..];
+    let negative = rest.first() == Some(&b'-');
+    if negative || rest.first() == Some(&b'+') {
+        rest = &rest[1..];
+    }
+    // Accumulated on the negative side, which holds one more value.
+    let mut value: i64 = 0;
+    for digit in rest.iter().take_while(|b| b.is_ascii_digit()) {
+        value = value
+            .saturating_mul(10)
+            .saturating_sub(i64::from(digit - b'0'));
+    }
+    if negative {
+        value
+    } else {
+        value.checked_neg().unwrap_or(i64::MAX)
+    }
+}
+
 /// Numeric equals operator (@eq).
-/// Supports both numeric literals and variable references (e.g., %{tx.var}).
 pub struct EqOperator {
-    /// The argument (may be a number or variable reference).
-    arg: String,
+    target: i64,
 }
 
 impl EqOperator {
     /// Create the operator from its SecLang argument.
     pub fn new(value: &str) -> Self {
         Self {
-            arg: value.to_string(),
+            target: leading_integer(value),
         }
-    }
-
-    fn target_value(&self) -> Option<i64> {
-        // If it's a variable reference, we can't resolve it statically
-        if self.arg.contains("%{") {
-            return None;
-        }
-        self.arg.parse().ok()
     }
 }
 
 impl Operator for EqOperator {
     fn execute(&self, value: &str) -> OperatorResult {
-        if let Some(target) = self.target_value() {
-            if let Ok(n) = value.parse::<i64>() {
-                if n == target {
-                    return OperatorResult::matched(value.to_string());
-                }
-            }
+        if leading_integer(value) == self.target {
+            OperatorResult::matched(value.to_string())
+        } else {
+            OperatorResult::no_match()
         }
-        // For variable references, comparison would need runtime resolution
-        // For now, we don't match if we can't resolve
-        OperatorResult::no_match()
     }
 
     fn name(&self) -> &'static str {
@@ -159,35 +180,25 @@ impl Operator for EqOperator {
 
 /// Greater than operator (@gt).
 pub struct GtOperator {
-    arg: String,
+    target: i64,
 }
 
 impl GtOperator {
     /// Create the operator from its SecLang argument.
     pub fn new(value: &str) -> Self {
         Self {
-            arg: value.to_string(),
+            target: leading_integer(value),
         }
-    }
-
-    fn target_value(&self) -> Option<i64> {
-        if self.arg.contains("%{") {
-            return None;
-        }
-        self.arg.parse().ok()
     }
 }
 
 impl Operator for GtOperator {
     fn execute(&self, value: &str) -> OperatorResult {
-        if let Some(target) = self.target_value() {
-            if let Ok(n) = value.parse::<i64>() {
-                if n > target {
-                    return OperatorResult::matched(value.to_string());
-                }
-            }
+        if leading_integer(value) > self.target {
+            OperatorResult::matched(value.to_string())
+        } else {
+            OperatorResult::no_match()
         }
-        OperatorResult::no_match()
     }
 
     fn name(&self) -> &'static str {
@@ -197,35 +208,25 @@ impl Operator for GtOperator {
 
 /// Less than operator (@lt).
 pub struct LtOperator {
-    arg: String,
+    target: i64,
 }
 
 impl LtOperator {
     /// Create the operator from its SecLang argument.
     pub fn new(value: &str) -> Self {
         Self {
-            arg: value.to_string(),
+            target: leading_integer(value),
         }
-    }
-
-    fn target_value(&self) -> Option<i64> {
-        if self.arg.contains("%{") {
-            return None;
-        }
-        self.arg.parse().ok()
     }
 }
 
 impl Operator for LtOperator {
     fn execute(&self, value: &str) -> OperatorResult {
-        if let Some(target) = self.target_value() {
-            if let Ok(n) = value.parse::<i64>() {
-                if n < target {
-                    return OperatorResult::matched(value.to_string());
-                }
-            }
+        if leading_integer(value) < self.target {
+            OperatorResult::matched(value.to_string())
+        } else {
+            OperatorResult::no_match()
         }
-        OperatorResult::no_match()
     }
 
     fn name(&self) -> &'static str {
@@ -235,35 +236,25 @@ impl Operator for LtOperator {
 
 /// Greater than or equal operator (@ge).
 pub struct GeOperator {
-    arg: String,
+    target: i64,
 }
 
 impl GeOperator {
     /// Create the operator from its SecLang argument.
     pub fn new(value: &str) -> Self {
         Self {
-            arg: value.to_string(),
+            target: leading_integer(value),
         }
-    }
-
-    fn target_value(&self) -> Option<i64> {
-        if self.arg.contains("%{") {
-            return None;
-        }
-        self.arg.parse().ok()
     }
 }
 
 impl Operator for GeOperator {
     fn execute(&self, value: &str) -> OperatorResult {
-        if let Some(target) = self.target_value() {
-            if let Ok(n) = value.parse::<i64>() {
-                if n >= target {
-                    return OperatorResult::matched(value.to_string());
-                }
-            }
+        if leading_integer(value) >= self.target {
+            OperatorResult::matched(value.to_string())
+        } else {
+            OperatorResult::no_match()
         }
-        OperatorResult::no_match()
     }
 
     fn name(&self) -> &'static str {
@@ -273,35 +264,25 @@ impl Operator for GeOperator {
 
 /// Less than or equal operator (@le).
 pub struct LeOperator {
-    arg: String,
+    target: i64,
 }
 
 impl LeOperator {
     /// Create the operator from its SecLang argument.
     pub fn new(value: &str) -> Self {
         Self {
-            arg: value.to_string(),
+            target: leading_integer(value),
         }
-    }
-
-    fn target_value(&self) -> Option<i64> {
-        if self.arg.contains("%{") {
-            return None;
-        }
-        self.arg.parse().ok()
     }
 }
 
 impl Operator for LeOperator {
     fn execute(&self, value: &str) -> OperatorResult {
-        if let Some(target) = self.target_value() {
-            if let Ok(n) = value.parse::<i64>() {
-                if n <= target {
-                    return OperatorResult::matched(value.to_string());
-                }
-            }
+        if leading_integer(value) <= self.target {
+            OperatorResult::matched(value.to_string())
+        } else {
+            OperatorResult::no_match()
         }
-        OperatorResult::no_match()
     }
 
     fn name(&self) -> &'static str {

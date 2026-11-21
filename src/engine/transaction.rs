@@ -5,9 +5,10 @@ use std::sync::Arc;
 use super::chain::ChainState;
 use super::control::{CtlDirective, TransactionControls};
 use super::intervention::Intervention;
+use super::operand_macro::{self, OperandMacro};
 use super::phase::Phase;
 use super::ruleset::{CompiledRule, CompiledRuleset, RuleEngineMode};
-use super::scoring::AnomalyScore;
+use super::scoring::ANOMALY_SCORE;
 use crate::actions::{
     execute_actions, ActionResult, DisruptiveOutcome, FlowOutcome, SetVarOp as RuleSetVar,
     SetVarOperation,
@@ -51,8 +52,6 @@ pub struct Transaction {
     phase: Phase,
     /// Intervention (if any).
     intervention: Option<Intervention>,
-    /// Anomaly score tracker.
-    anomaly_score: AnomalyScore,
     /// Default block status.
     default_status: u16,
     /// Matched rules.
@@ -169,14 +168,15 @@ pub struct SetVarEffect {
 impl Transaction {
     /// Create a new transaction.
     pub fn new(ruleset: Arc<CompiledRuleset>, default_status: u16) -> Self {
+        let mut request = RequestData::new();
+        request.unique_id = generate_unique_id();
         Self {
             ruleset,
-            request: RequestData::new(),
+            request,
             response: ResponseData::new(),
             tx: TxCollection::new(),
             phase: Phase::RequestHeaders,
             intervention: None,
-            anomaly_score: AnomalyScore::new(),
             default_status,
             matched_rules: Vec::new(),
             allowed: false,
@@ -186,6 +186,36 @@ impl Transaction {
             matched_data: Vec::new(),
             setvar_effects: Vec::new(),
             record_setvar_effects: false,
+        }
+    }
+
+    /// The identifier of this transaction, backing `UNIQUE_ID`.
+    ///
+    /// Generated when the transaction is created; see
+    /// [`set_unique_id`](Self::set_unique_id) to use the embedding
+    /// application's own request ID instead.
+    pub fn unique_id(&self) -> &str {
+        &self.request.unique_id
+    }
+
+    /// Replace the generated `UNIQUE_ID` with the caller's own request ID,
+    /// so that rule logs and the application's logs share one identifier.
+    ///
+    /// Call it before processing the request: rules already evaluated have
+    /// seen the previous value. An empty `id` is ignored.
+    ///
+    /// # Security
+    ///
+    /// The ID must not be under the client's control: do not pass a request
+    /// header such as `X-Request-ID` taken as received. CRS derives its
+    /// sampling decision from `UNIQUE_ID` (rule 901410), so with
+    /// `tx.sampling_percentage` below 100 a client that chooses the ID can
+    /// pick values that fall outside the sample and skip the CRS entirely.
+    /// Use an ID the application or proxy generated itself, and that differs
+    /// between requests.
+    pub fn set_unique_id(&mut self, id: &str) {
+        if !id.is_empty() {
+            self.request.unique_id = id.to_string();
         }
     }
 
@@ -433,9 +463,13 @@ impl Transaction {
         &self.matched_rules
     }
 
-    /// Get the anomaly score.
+    /// Get the anomaly score: the value of `TX:anomaly_score`, or 0 when no
+    /// rule has set it.
     pub fn anomaly_score(&self) -> i32 {
-        self.anomaly_score.inbound
+        self.tx
+            .get(ANOMALY_SCORE)
+            .and_then(|values| values.first()?.parse().ok())
+            .unwrap_or(0)
     }
 
     /// Get the TX collection.
@@ -470,8 +504,9 @@ impl Transaction {
             return Ok(());
         }
 
-        // Clone rules to avoid borrow conflicts with mutable self
-        let rules: Vec<CompiledRule> = self.ruleset.rules_for_phase(phase).to_vec();
+        // Keep the immutable ruleset alive independently of mutable transaction state.
+        let ruleset = Arc::clone(&self.ruleset);
+        let rules = ruleset.rules_for_phase(phase);
         if rules.is_empty() {
             return Ok(());
         }
@@ -520,10 +555,13 @@ impl Transaction {
 
             let rule = &rules[idx];
 
-            // ctl:ruleRemoveById excluded this rule for this transaction. Skip
-            // it as though it were not in the ruleset -- including its chain
-            // links, which cannot fire without their starter.
-            if self.controls.is_rule_removed(rule.id.as_deref()) {
+            // ctl:ruleRemoveById or ctl:ruleRemoveByTag excluded this rule for
+            // this transaction. Skip it as though it were not in the ruleset --
+            // including its chain links, which cannot fire without their
+            // starter.
+            if self.controls.is_rule_removed(rule.id.as_deref())
+                || self.controls.is_rule_removed_by_tag(rule.tags())
+            {
                 if rule.is_chain {
                     chain_state.reset();
                     pending_chain_actions = None;
@@ -762,9 +800,6 @@ impl Transaction {
             idx += 1;
         }
 
-        // Sync anomaly score to TX
-        self.anomaly_score.sync_to_tx(&mut self.tx);
-
         Ok(())
     }
 
@@ -790,11 +825,13 @@ impl Transaction {
         // and is what CRS's `SecRule &TX:x "@eq 0"` initialization relies on.
         // Emitting a value even for an absent count also keeps the spec out of
         // the "resolved to nothing" early-return below, so `&x "@eq 0"` matches.
-        // ctl:ruleRemoveTargetById drops individual targets from this rule for
-        // this transaction. The check is hoisted so rules with no exclusion --
-        // effectively all of them -- pay one comparison rather than a scan per
-        // variable.
-        let filter_targets = self.controls.has_target_removals(rule.id.as_deref());
+        // ctl:ruleRemoveTargetById and ctl:ruleRemoveTargetByTag drop
+        // individual targets from this rule for this transaction. Both checks
+        // are hoisted so rules with no exclusion -- effectively all of them --
+        // pay one comparison rather than a scan per variable.
+        let filter_by_id = self.controls.has_target_removals(rule.id.as_deref());
+        let filter_by_tag = self.controls.has_tag_target_removals(rule.tags());
+        let filter_targets = filter_by_id || filter_by_tag;
 
         let mut all_values = Vec::new();
         let mut any_excluded = false;
@@ -803,9 +840,14 @@ impl Transaction {
             if filter_targets {
                 let before = resolved.len();
                 resolved.retain(|(name, _)| {
-                    !self
-                        .controls
-                        .is_target_removed(rule.id.as_deref(), spec, name)
+                    !(filter_by_id
+                        && self
+                            .controls
+                            .is_target_removed(rule.id.as_deref(), spec, name))
+                        && !(filter_by_tag
+                            && self
+                                .controls
+                                .is_target_removed_by_tag(rule.tags(), spec, name))
                 });
                 any_excluded |= resolved.len() != before;
             }
@@ -863,19 +905,22 @@ impl Transaction {
         // If the operator argument references runtime macros (e.g.
         // `@ge %{tx.inbound_anomaly_score_threshold}`), expand them against the
         // current TX state and recompile the operator so the comparison runs
-        // against the resolved value. Otherwise use the precompiled operator.
+        // against the resolved value. Otherwise use the precompiled operator,
+        // which for an operand the engine cannot resolve is one that never
+        // matches.
         let dynamic_operator;
-        let operator: &dyn Operator = if rule.operator_spec.argument.contains("%{") {
-            let expanded = self.expand_operator_macros(&rule.operator_spec.argument);
-            dynamic_operator = compile_operator(&OperatorSpec {
-                negated: rule.operator_spec.negated,
-                name: rule.operator_spec.name,
-                argument: expanded,
-            })?;
-            dynamic_operator.as_ref()
-        } else {
-            rule.operator.as_ref()
-        };
+        let operator: &dyn Operator =
+            if !rule.operand_unresolvable && rule.operator_spec.argument.contains("%{") {
+                let expanded = self.expand_operator_macros(&rule.operator_spec.argument);
+                dynamic_operator = compile_operator(&OperatorSpec {
+                    negated: rule.operator_spec.negated,
+                    name: rule.operator_spec.name,
+                    argument: expanded,
+                })?;
+                dynamic_operator.as_ref()
+            } else {
+                rule.operator.as_ref()
+            };
 
         // Apply transformations and match every value
         let mut matches = Vec::new();
@@ -915,53 +960,29 @@ impl Transaction {
     /// `REQUEST_HEADERS.<name>` and `MATCHED_VAR`/`MATCHED_VAR_NAME`. Anything
     /// else expands to an empty string.
     fn expand_operator_macros(&self, arg: &str) -> String {
-        // Compiled once: this runs on every evaluation of an operator whose
-        // argument contains `%{`.
-        static MACRO: once_cell::sync::Lazy<regex::Regex> = once_cell::sync::Lazy::new(|| {
-            regex::Regex::new(r"%\{([^}]+)\}").expect("static macro regex is valid")
-        });
-        MACRO
-            .replace_all(arg, |caps: &regex::Captures| {
-                let inner = &caps[1];
-                // Bare names that are not collections (`%{MATCHED_VAR_NAME}`).
-                match inner.to_ascii_lowercase().as_str() {
-                    "matched_var" => {
-                        return self
-                            .matched_vars
-                            .last()
-                            .map(|(_, v)| v.clone())
-                            .unwrap_or_default()
-                    }
-                    "matched_var_name" => {
-                        return self
-                            .matched_vars
-                            .last()
-                            .map(|(n, _)| n.clone())
-                            .unwrap_or_default()
-                    }
-                    _ => {}
-                }
-                let (collection, name) = match inner.split_once('.') {
-                    Some((c, n)) => (c.to_ascii_lowercase(), n),
-                    None => ("tx".to_string(), inner),
-                };
-                match collection.as_str() {
-                    "tx" => self
-                        .tx
-                        .get(name)
-                        .and_then(|v| v.first().map(|s| s.to_string()))
-                        .unwrap_or_default(),
-                    // CRS 943110: `!@endsWith %{request_headers.host}`.
-                    "request_headers" => self
-                        .request
-                        .headers
-                        .get(&name.to_ascii_lowercase())
-                        .and_then(|v| v.first().map(|s| s.to_string()))
-                        .unwrap_or_default(),
-                    _ => String::new(),
-                }
-            })
-            .into_owned()
+        operand_macro::expand(arg, |operand| match operand {
+            OperandMacro::MatchedVar => self
+                .matched_vars
+                .last()
+                .map(|(_, v)| v.clone())
+                .unwrap_or_default(),
+            OperandMacro::MatchedVarName => self
+                .matched_vars
+                .last()
+                .map(|(n, _)| n.clone())
+                .unwrap_or_default(),
+            OperandMacro::Tx(name) => self
+                .tx
+                .get(name)
+                .and_then(|v| v.first().map(|s| s.to_string()))
+                .unwrap_or_default(),
+            OperandMacro::RequestHeader(name) => self
+                .request
+                .headers
+                .get(&name.to_ascii_lowercase())
+                .and_then(|v| v.first().map(|s| s.to_string()))
+                .unwrap_or_default(),
+        })
     }
 
     /// Publish the captures of a `capture` rule as `TX:0`..`TX:9`.
@@ -1039,11 +1060,6 @@ impl Transaction {
                 });
             }
         }
-
-        // Sync anomaly score from TX if relevant
-        if resolved.name == "anomaly_score" {
-            self.anomaly_score.sync_from_tx(&self.tx);
-        }
     }
 }
 
@@ -1101,10 +1117,46 @@ impl std::fmt::Debug for Transaction {
         f.debug_struct("Transaction")
             .field("phase", &self.phase)
             .field("has_intervention", &self.intervention.is_some())
-            .field("anomaly_score", &self.anomaly_score.inbound)
+            .field("anomaly_score", &self.anomaly_score())
             .field("matched_rules", &self.matched_rules)
             .finish()
     }
+}
+
+/// A fresh identifier for a new transaction, backing `UNIQUE_ID`.
+///
+/// Three parts: the creation time in microseconds, so IDs stay distinct
+/// across restarts; a process-wide sequence number, so two transactions
+/// created in the same microsecond still differ; and a random part, so the
+/// value cannot be predicted. CRS hashes it to decide which requests fall
+/// inside its sampling percentage (rule 901410), and a client able to
+/// predict it could choose to fall outside the sample.
+///
+/// The random part comes from the standard library's per-process hash seed,
+/// which avoids a dependency on a random number crate for a value that does
+/// not need to be cryptographically strong.
+fn generate_unique_id() -> String {
+    use std::collections::hash_map::RandomState;
+    use std::hash::{BuildHasher, Hasher};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+    let seq = SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    let mut hasher = RandomState::new().build_hasher();
+    hasher.write_u64(seq);
+    hasher.write_u128(now.as_nanos());
+    format!(
+        "{}{:06}-{:x}-{:016x}",
+        now.as_secs(),
+        now.subsec_micros(),
+        seq,
+        hasher.finish()
+    )
 }
 
 #[cfg(test)]

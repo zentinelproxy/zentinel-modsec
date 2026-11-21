@@ -34,6 +34,13 @@ pub struct RequestData {
     /// Uploaded files (key = part name, value = client-supplied filename),
     /// populated by the multipart body processor. Backs `FILES`/`FILES_NAMES`.
     pub files: HashMapCollection,
+    /// Size in bytes of each uploaded file (key = part name), populated by
+    /// the multipart body processor. Backs `FILES_SIZES`.
+    pub files_sizes: HashMapCollection,
+    /// Total size in bytes of all uploaded files. Backs `FILES_COMBINED_SIZE`.
+    pub files_combined_size: u64,
+    /// Identifier unique to this transaction. Backs `UNIQUE_ID`.
+    pub unique_id: String,
     /// Name of the body processor that handled the request body
     /// (`MULTIPART`, `URLENCODED`, `JSON`, or empty when none ran). Backs
     /// `REQBODY_PROCESSOR`.
@@ -148,46 +155,52 @@ impl RequestData {
 
     /// Parse a `multipart/form-data` body.
     ///
-    /// Populates `args_post` from form fields, `files` from file parts, and
-    /// `multipart_part_headers` with every part header line keyed by the part
-    /// name (ModSecurity `MULTIPART_PART_HEADERS` semantics). Returns `false`
-    /// when no boundary parameter can be extracted from the Content-Type.
+    /// Populates `args_post` from form fields, `files` and `files_sizes`
+    /// from file parts, and `multipart_part_headers` with every part header
+    /// line keyed by the part name (ModSecurity `MULTIPART_PART_HEADERS`
+    /// semantics). Returns `false` when no boundary parameter can be
+    /// extracted from the Content-Type.
+    ///
+    /// The body is split as bytes, not as text: an uploaded file is usually
+    /// not valid UTF-8, and a lossy conversion would change its length,
+    /// which `FILES_SIZES` and `FILES_COMBINED_SIZE` must report exactly.
     pub fn parse_multipart_body(&mut self, content_type: &str) -> bool {
         let Some(boundary) = extract_multipart_boundary(content_type) else {
             return false;
         };
-        let body = self.body_str();
+        let body = std::mem::take(&mut self.body);
         let delimiter = format!("--{boundary}");
 
-        let mut sections = body.split(delimiter.as_str());
+        let mut sections = split_bytes(&body, delimiter.as_bytes()).into_iter();
         // Everything before the first boundary is preamble; discard it.
         let _preamble = sections.next();
 
         for section in sections {
-            if section.starts_with("--") {
+            if section.starts_with(b"--") {
                 // Closing delimiter (`--boundary--`); anything after is epilogue.
                 break;
             }
             // The boundary line ends with CRLF before the part headers.
             let section = section
-                .strip_prefix("\r\n")
-                .or_else(|| section.strip_prefix("\n"))
+                .strip_prefix(b"\r\n")
+                .or_else(|| section.strip_prefix(b"\n"))
                 .unwrap_or(section);
 
             // Headers are separated from the part content by a blank line.
-            let (head, content) = match section.split_once("\r\n\r\n") {
+            let (head, content) = match split_once_bytes(section, b"\r\n\r\n") {
                 Some(split) => split,
-                None => match section.split_once("\n\n") {
+                None => match split_once_bytes(section, b"\n\n") {
                     Some(split) => split,
-                    None => (section, ""),
+                    None => (section, &[][..]),
                 },
             };
             // The CRLF before the next boundary belongs to the framing, not
             // the content.
             let content = content
-                .strip_suffix("\r\n")
-                .or_else(|| content.strip_suffix("\n"))
+                .strip_suffix(b"\r\n")
+                .or_else(|| content.strip_suffix(b"\n"))
                 .unwrap_or(content);
+            let head = String::from_utf8_lossy(head);
 
             let mut part_name: Option<String> = None;
             let mut filename: Option<String> = None;
@@ -217,12 +230,17 @@ impl RequestData {
                 self.multipart_part_headers.add(name.clone(), line);
             }
             if let Some(fname) = filename {
+                let size = content.len() as u64;
+                self.files_sizes.add(name.clone(), size.to_string());
+                self.files_combined_size += size;
                 self.files.add(name, fname);
             } else {
-                self.args_post.add(name, content.to_string());
+                self.args_post
+                    .add(name, String::from_utf8_lossy(content).into_owned());
             }
         }
 
+        self.body = body;
         self.body_processor = "MULTIPART".to_string();
         true
     }
@@ -649,6 +667,28 @@ fn push_json_arg(
     *count += 1;
     args.add(path.to_string(), value);
     false
+}
+
+/// Split `haystack` on every occurrence of `needle`, like `str::split`.
+///
+/// Uses `memchr::memmem`, which stays fast on multi-megabyte uploads where a
+/// byte-by-byte window comparison does not.
+fn split_bytes<'a>(haystack: &'a [u8], needle: &[u8]) -> Vec<&'a [u8]> {
+    let mut parts = Vec::new();
+    let mut start = 0;
+    for pos in memchr::memmem::find_iter(haystack, needle) {
+        parts.push(&haystack[start..pos]);
+        start = pos + needle.len();
+    }
+    parts.push(&haystack[start..]);
+    parts
+}
+
+/// Split `haystack` around the first occurrence of `needle`, like
+/// `str::split_once`.
+fn split_once_bytes<'a>(haystack: &'a [u8], needle: &[u8]) -> Option<(&'a [u8], &'a [u8])> {
+    let pos = memchr::memmem::find(haystack, needle)?;
+    Some((&haystack[..pos], &haystack[pos + needle.len()..]))
 }
 
 /// Extract the `boundary` parameter from a multipart Content-Type value.

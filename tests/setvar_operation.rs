@@ -13,6 +13,8 @@
 //! afterwards, so a captured `-7` turned `setvar:tx.x=%{tx.0}` into a
 //! decrement.
 
+mod common;
+
 use zentinel_modsec::engine::Transaction;
 use zentinel_modsec::ModSecurity;
 
@@ -133,4 +135,93 @@ fn capture_clears_the_slots_the_match_did_not_fill() {
     let tx = run(rules, "/ab");
     assert_eq!(tx_var(&tx, "one"), "a");
     assert_eq!(tx_var(&tx, "two"), "");
+}
+
+#[test]
+fn unsigned_literals_retain_their_spelling_for_later_rules() {
+    let tx = run(
+        r#"SecRuleEngine On
+SecAction "id:1,phase:1,pass,setvar:TX.code=007"
+SecRule TX:code "@streq 007" "id:2,phase:1,deny""#,
+        "/",
+    );
+    assert_eq!(tx_var(&tx, "code"), "007");
+    assert!(tx.has_intervention());
+}
+
+/// Load `rules` and return them with every warning the load logged.
+fn load_capturing_warnings(rules: &str) -> (ModSecurity, String) {
+    let (loaded, logged) = common::capture_log(|| ModSecurity::from_string(rules));
+    (loaded.expect("rules should load"), logged)
+}
+
+const UNSUPPORTED_COLLECTION_WARNING: &str =
+    "setvar writes to a collection this engine does not implement and was skipped";
+
+/// libmodsecurity keeps IP, SESSION, USER, GLOBAL and RESOURCE as persistent
+/// collections. This engine has only TX, and a write to any other collection
+/// used to land in TX under the same member name.
+#[test]
+fn a_write_to_an_unimplemented_collection_is_skipped_with_one_warning() {
+    let (msc, logged) = load_capturing_warnings(
+        r#"SecRuleEngine On
+SecAction "id:1,phase:1,pass,nolog,setvar:tx.x=5,setvar:ip.x=1,setvar:tx.kept=1"
+SecAction "id:2,phase:1,pass,nolog,setvar:IP.x=+1,setvar:!ip.kept"
+SecRule TX:x "@eq 5" "id:3,phase:1,deny,setvar:ip.y=1""#,
+    );
+
+    assert_eq!(
+        logged.matches(UNSUPPORTED_COLLECTION_WARNING).count(),
+        1,
+        "{logged}"
+    );
+    assert!(logged.contains("collection=ip"), "{logged}");
+    assert!(logged.contains("setvars_skipped=4"), "{logged}");
+
+    let mut tx = msc.new_transaction();
+    tx.process_uri("/", "GET", "HTTP/1.1").unwrap();
+    tx.process_request_headers().unwrap();
+    assert_eq!(tx_var(&tx, "x"), "5");
+    assert_eq!(tx_var(&tx, "kept"), "1");
+    assert_eq!(tx_var(&tx, "y"), "-");
+    assert!(tx.has_intervention());
+}
+
+#[test]
+fn each_unimplemented_collection_is_reported_once() {
+    let (msc, logged) = load_capturing_warnings(
+        r#"SecAction "id:1,phase:1,pass,nolog,setvar:session.a=1,setvar:user.a=1,setvar:global.a=1"
+SecAction "id:2,phase:1,pass,nolog,setvar:resource.a=1,setvar:session.b=1""#,
+    );
+
+    assert_eq!(
+        logged.matches(UNSUPPORTED_COLLECTION_WARNING).count(),
+        4,
+        "{logged}"
+    );
+    for collection in ["session", "user", "global", "resource"] {
+        assert!(
+            logged.contains(&format!("collection={collection} ")),
+            "{logged}"
+        );
+    }
+
+    let mut tx = msc.new_transaction();
+    tx.process_uri("/", "GET", "HTTP/1.1").unwrap();
+    tx.process_request_headers().unwrap();
+    assert_eq!(tx_var(&tx, "a"), "-");
+    assert_eq!(tx_var(&tx, "b"), "-");
+}
+
+#[test]
+fn a_ruleset_that_writes_only_to_tx_loads_without_a_warning() {
+    let (_, logged) =
+        load_capturing_warnings(r#"SecAction "id:1,phase:1,pass,nolog,setvar:tx.x=1,setvar:y=1""#);
+    assert!(!logged.contains(UNSUPPORTED_COLLECTION_WARNING), "{logged}");
+}
+
+#[test]
+fn a_name_without_a_collection_is_a_tx_variable() {
+    let tx = run(r#"SecAction "id:1,phase:1,pass,nolog,setvar:score=2""#, "/");
+    assert_eq!(tx_var(&tx, "score"), "2");
 }

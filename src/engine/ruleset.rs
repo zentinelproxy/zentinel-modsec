@@ -1,16 +1,17 @@
 //! Compiled ruleset for efficient rule matching.
 
 use crate::error::Result;
-use crate::operators::{compile_operator, Operator};
+use crate::operators::{compile_operator, NoMatchOperator, Operator};
 use crate::parser::{
-    Action, Directive, FlowAction, MetadataAction, OperatorName, OperatorSpec, Parser,
+    Action, DataAction, Directive, FlowAction, MetadataAction, OperatorName, OperatorSpec, Parser,
     RuleEngineMode as ParserRuleEngineMode, RuleIdSelector, Selection, UpdateTargetById,
     VariableName, VariableSpec, XmlTarget,
 };
 use crate::transformations::TransformationPipeline;
 
+use super::operand_macro;
 use super::phase::Phase;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
 /// A parsed SecRule ready for execution.
@@ -28,6 +29,10 @@ pub struct CompiledRule {
     pub operator_spec: OperatorSpec,
     /// Whether operator is negated.
     pub operator_negated: bool,
+    /// Whether a numeric operator's argument holds a macro the engine cannot
+    /// resolve. `operator` then never matches and the argument is not
+    /// expanded. Decided at load time, so evaluation only tests this flag.
+    pub operand_unresolvable: bool,
     /// Transformation pipeline.
     pub transformations: TransformationPipeline,
     /// Actions to execute on match.
@@ -36,6 +41,20 @@ pub struct CompiledRule {
     pub is_chain: bool,
     /// Index of next rule in chain (if any).
     pub chain_next: Option<usize>,
+}
+
+impl CompiledRule {
+    /// The rule's `tag:` values, in the order they were written.
+    ///
+    /// Read from the actions rather than cached: only `ctl:ruleRemoveByTag`
+    /// and `ctl:ruleRemoveTargetByTag` need them during evaluation, and the
+    /// transaction only asks once one of those has fired.
+    pub fn tags(&self) -> impl Iterator<Item = &str> + Clone {
+        self.actions.iter().filter_map(|action| match action {
+            Action::Metadata(MetadataAction::Tag(tag)) => Some(tag.as_str()),
+            _ => None,
+        })
+    }
 }
 
 impl std::fmt::Debug for CompiledRule {
@@ -153,7 +172,7 @@ impl CompiledRuleset {
     }
 
     /// Compile parsed directives into a ruleset.
-    pub fn compile(directives: Vec<Directive>) -> Result<Self> {
+    pub fn compile(mut directives: Vec<Directive>) -> Result<Self> {
         let mut ruleset = Self::new();
         let mut pending_chain: Option<(Phase, usize)> = None;
 
@@ -166,25 +185,23 @@ impl CompiledRuleset {
         // never fired -- is the failure this reporting exists to prevent.
         report_unsupported_controls(&directives);
 
-        // SecRuleRemoveById and SecRuleUpdateTargetById are applied against
-        // the whole ruleset once loading completes (like ModSecurity, where
-        // they modify already-defined rules). Removals are collected up front
-        // so removed rules are never compiled; target updates are applied
-        // after the compile loop.
-        let removals: Vec<RuleIdSelector> = directives
-            .iter()
-            .filter_map(|d| match d {
-                Directive::SecRuleRemoveById(ids) => Some(ids.iter().copied()),
-                _ => None,
-            })
-            .flatten()
-            .collect();
-        let mut target_updates: Vec<UpdateTargetById> = Vec::new();
-        // When a removed rule is a chain head, its continuation rules (which
-        // usually carry no id of their own) must be dropped with it.
-        let mut skipping_removed_chain = false;
+        // Likewise for setvar into a collection other than TX. The setvar is
+        // taken out of the rule here, so nothing is left to check per request.
+        skip_unsupported_setvars(&mut directives);
 
-        for directive in directives {
+        // Static removals and SecRuleUpdateTargetById are applied against the
+        // whole ruleset, wherever they are declared (like ModSecurity, which
+        // consults them when a rule is evaluated). Removals are resolved up
+        // front so removed rules are never compiled; target updates are
+        // applied after the compile loop.
+        let excluded = excluded_rules(&directives);
+        let mut target_updates: Vec<UpdateTargetById> = Vec::new();
+        let mut unresolvable_operands: BTreeMap<String, usize> = BTreeMap::new();
+
+        for (directive, excluded) in directives.into_iter().zip(excluded) {
+            if excluded {
+                continue;
+            }
             match directive {
                 Directive::SecRuleEngine(mode) => {
                     ruleset.engine_mode = match mode {
@@ -206,23 +223,22 @@ impl CompiledRuleset {
                     let id = extract_id(&rule.actions);
                     let is_chain = has_chain(&rule.actions);
 
-                    if skipping_removed_chain {
-                        // Continuation of a removed chained rule.
-                        skipping_removed_chain = is_chain;
-                        continue;
-                    }
-                    if id_is_removed(&id, &removals) {
-                        skipping_removed_chain = is_chain;
-                        continue;
-                    }
-
                     let transformations = extract_transformations(&rule.actions)?;
 
                     report_unimplemented_variables(&rule.variables, &id);
 
                     let operator_spec = rule.operator.clone();
-                    let (operator, operator_negated) =
-                        compile_operator_reporting(&rule.operator, &id)?;
+                    let operand_unresolvable =
+                        note_unresolvable_operand(&rule.operator, &mut unresolvable_operands);
+                    let (operator, operator_negated) = if operand_unresolvable {
+                        // Negation is kept: before numeric operators read an
+                        // empty argument as 0 this operand was never compared,
+                        // so `!@gt %{env.x}` matched, and it still does.
+                        let never: Arc<dyn Operator> = Arc::new(NoMatchOperator);
+                        (never, rule.operator.negated)
+                    } else {
+                        compile_operator_reporting(&rule.operator, &id)?
+                    };
 
                     let compiled = CompiledRule {
                         id,
@@ -230,6 +246,7 @@ impl CompiledRuleset {
                         variables: rule.variables,
                         operator,
                         operator_negated,
+                        operand_unresolvable,
                         operator_spec,
                         transformations,
                         actions: rule.actions,
@@ -279,6 +296,7 @@ impl CompiledRuleset {
                         variables: vec![],
                         operator,
                         operator_negated: false,
+                        operand_unresolvable: false,
                         operator_spec,
                         transformations,
                         actions: sec_action.actions,
@@ -304,6 +322,7 @@ impl CompiledRuleset {
         }
 
         apply_target_updates(&mut ruleset, &target_updates);
+        report_unresolvable_operands(&unresolvable_operands);
 
         Ok(ruleset)
     }
@@ -345,15 +364,58 @@ fn extract_phase(actions: &[Action]) -> Phase {
     Phase::RequestBody // ModSecurity default
 }
 
-/// Check whether a rule's ID is covered by any `SecRuleRemoveById` selector.
+/// Mark the rules removed by `SecRuleRemoveById`, `SecRuleRemoveByTag` and
+/// `SecRuleRemoveByMsg`, indexed like `directives`.
 ///
-/// Rules without an ID cannot be targeted by ID, and an ID that does not parse
-/// as a number never matches a numeric selector.
-fn id_is_removed(id: &Option<String>, removals: &[RuleIdSelector]) -> bool {
-    let Some(numeric) = id.as_ref().and_then(|s| s.parse::<u64>().ok()) else {
-        return false;
-    };
-    removals.iter().any(|selector| selector.matches(numeric))
+/// Like ModSecurity v3, which consults its exclusions whenever a rule is
+/// evaluated, a removal applies to the whole ruleset wherever it is declared.
+/// The selector is matched against the chain starter, and the continuation
+/// rules are removed with it.
+fn excluded_rules(directives: &[Directive]) -> Vec<bool> {
+    let mut ids: Vec<&RuleIdSelector> = Vec::new();
+    let mut tags = Vec::new();
+    let mut msgs = Vec::new();
+    for directive in directives {
+        match directive {
+            Directive::SecRuleRemoveById(selectors) => ids.extend(selectors),
+            Directive::SecRuleRemoveByTag(tag) => tags.push(tag),
+            Directive::SecRuleRemoveByMsg(msg) => msgs.push(msg),
+            _ => {}
+        }
+    }
+
+    let mut excluded = vec![false; directives.len()];
+    if ids.is_empty() && tags.is_empty() && msgs.is_empty() {
+        return excluded;
+    }
+    let mut child = false;
+    let mut remove = false;
+    for (directive, excluded) in directives.iter().zip(&mut excluded) {
+        let actions = match directive {
+            Directive::SecRule(rule) => &rule.actions,
+            Directive::SecAction(action) => &action.actions,
+            _ => continue,
+        };
+        if !child {
+            remove = extract_id(actions)
+                .and_then(|id| id.parse::<u64>().ok())
+                .is_some_and(|id| ids.iter().any(|selector| selector.matches(id)))
+                || actions.iter().any(
+                    |a| matches!(a, Action::Metadata(MetadataAction::Tag(t)) if tags.contains(&t)),
+                )
+                || actions
+                    .iter()
+                    .rev()
+                    .find_map(|a| match a {
+                        Action::Metadata(MetadataAction::Msg(m)) => Some(m),
+                        _ => None,
+                    })
+                    .is_some_and(|m| msgs.contains(&m));
+        }
+        *excluded = remove;
+        child = has_chain(actions);
+    }
+    excluded
 }
 
 /// Apply `SecRuleUpdateTargetById` directives to the compiled rules.
@@ -525,6 +587,44 @@ fn compile_operator_reporting(
     }
 }
 
+/// Whether a numeric operator's argument holds a macro on a collection the
+/// engine cannot resolve, counting each such macro in `seen`.
+///
+/// libmodsecurity would resolve the macro. Here it expands to an empty string,
+/// which a numeric operator reads as 0: `@gt %{env.MAX_LEN}` would compare
+/// against a limit of 0 and match every non-empty value. The rule is left
+/// unable to match instead, and [`report_unresolvable_operands`] says so.
+///
+/// A macro that can be resolved but has no value (`%{tx.unset}`) is not this
+/// case: it is 0 in libmodsecurity too.
+fn note_unresolvable_operand(spec: &OperatorSpec, seen: &mut BTreeMap<String, usize>) -> bool {
+    if !spec.name.reads_argument_as_integer() {
+        return false;
+    }
+    // A set, so a rule naming one macro twice is counted once.
+    let macros: BTreeSet<&str> = operand_macro::unresolvable(&spec.argument).collect();
+    for written in &macros {
+        *seen.entry(written.to_string()).or_default() += 1;
+    }
+    !macros.is_empty()
+}
+
+/// Warn once per distinct macro that left a numeric operator unable to match.
+///
+/// Deduplicated by the macro as written, with the number of rules using it,
+/// like [`report_unsupported_controls`]: a ruleset that reads one limit from
+/// `%{env.MAX_LEN}` in many rules has one thing to fix.
+fn report_unresolvable_operands(seen: &BTreeMap<String, usize>) {
+    for (operand, count) in seen {
+        tracing::warn!(
+            macro = %operand,
+            rules_affected = count,
+            "numeric operator argument uses a macro on a collection this \
+             engine cannot resolve; the operator will never match"
+        );
+    }
+}
+
 /// Warn once per distinct unsupported `ctl:` directive found in a ruleset.
 ///
 /// Deduplicated by `directive=value`: CRS applies the same `ctl:` to hundreds
@@ -557,6 +657,45 @@ fn report_unsupported_controls(directives: &[Directive]) {
             rules_affected = count,
             reason = %reason,
             "ctl: directive is not implemented and will have no effect"
+        );
+    }
+}
+
+/// Drop every `setvar` that writes outside TX, warning once per collection.
+///
+/// libmodsecurity keeps IP, SESSION, USER, GLOBAL and RESOURCE as persistent
+/// collections; this engine has only TX. A write to another collection used to
+/// land in TX under the same member name, so `setvar:ip.score=1` overwrote
+/// `TX:score`. Rejecting it would make any ruleset that uses a persistent
+/// collection unloadable, so the setvar is removed and the rest of the rule
+/// keeps working.
+///
+/// Deduplicated by collection, like [`report_unsupported_controls`]: a ruleset
+/// that tracks state per IP does so from many rules.
+fn skip_unsupported_setvars(directives: &mut [Directive]) {
+    let mut skipped: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+
+    for directive in directives {
+        let actions = match directive {
+            Directive::SecRule(rule) => &mut rule.actions,
+            Directive::SecAction(action) => &mut action.actions,
+            _ => continue,
+        };
+        actions.retain(|action| match action {
+            Action::Data(DataAction::SetVar(spec)) if spec.collection != "tx" => {
+                *skipped.entry(spec.collection.clone()).or_default() += 1;
+                false
+            }
+            _ => true,
+        });
+    }
+
+    for (collection, count) in skipped {
+        tracing::warn!(
+            collection = %collection,
+            setvars_skipped = count,
+            "setvar writes to a collection this engine does not implement and \
+             was skipped; only TX is supported"
         );
     }
 }

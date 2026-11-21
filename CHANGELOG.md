@@ -9,6 +9,16 @@ pins (see [`docs/conformance.md`](docs/conformance.md)).
 
 ## [Unreleased]
 
+### Behavior changes
+
+- **A numeric operator with a bare macro name never matches.** `@gt
+  %{REMOTE_PORT}` was expanded as `tx.REMOTE_PORT` and compared against 0. v3
+  reads a bare name as the variable, which the engine cannot resolve in an
+  operand, so `@eq`, `@gt`, `@lt`, `@ge` and `@le` with a bare name other than
+  `MATCHED_VAR` or `MATCHED_VAR_NAME` are handled like a macro on an
+  unresolvable collection: no match, and one load warning per macro. Other
+  operators and `setvar` still read a bare name from TX. (#87)
+
 ## [0.7.0] - 2026-11-21
 
 CRS conformance: 4,900 to 4,949 of 5,184 runnable cases.
@@ -67,13 +77,6 @@ upgrading.
   An argument using a macro on a collection the engine cannot resolve
   (`%{env.MAX_LEN}`) is the exception: the rule never matches, and the load
   logs one warning per macro with the number of rules affected. (#80)
-- **A numeric operator with a bare macro name never matches.** `@gt
-  %{REMOTE_PORT}` was expanded as `tx.REMOTE_PORT` and compared against 0. v3
-  reads a bare name as the variable, which the engine cannot resolve in an
-  operand, so `@eq`, `@gt`, `@lt`, `@ge` and `@le` with a bare name other than
-  `MATCHED_VAR` or `MATCHED_VAR_NAME` are handled like a macro on an
-  unresolvable collection: no match, and one load warning per macro. Other
-  operators and `setvar` still read a bare name from TX. (#87)
 - **`t:urlDecodeUni` folds full-width ASCII escapes** (`%uFF01`..`%uFF5E`) to
   the ASCII characters they stand for, so `%uFF1C` decodes to `<`. Literal
   full-width characters in the input are left as they are. (#71)

@@ -34,11 +34,10 @@ pins (see [`docs/conformance.md`](docs/conformance.md)).
 
 - `@rx` answers a value that does not match without allocating capture
   slots. (#91)
-
-### Performance
-
 - A rule's message, tags and other metadata are collected when it
   intervenes, not copied on every match. (#92)
+- `%{...}` macros in operands and `setvar` are expanded without running a
+  regex, and whether an operand holds one is decided at load. (#93)
 
 ## [0.7.0] - 2026-11-21
 

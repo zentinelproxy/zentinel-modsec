@@ -910,18 +910,17 @@ impl Transaction {
         // which for an operand the engine cannot resolve is one that never
         // matches.
         let dynamic_operator;
-        let operator: &dyn Operator =
-            if !rule.operand_unresolvable && rule.operator_spec.argument.contains("%{") {
-                let expanded = self.expand_operator_macros(&rule.operator_spec.argument);
-                dynamic_operator = compile_operator(&OperatorSpec {
-                    negated: rule.operator_spec.negated,
-                    name: rule.operator_spec.name,
-                    argument: expanded,
-                })?;
-                dynamic_operator.as_ref()
-            } else {
-                rule.operator.as_ref()
-            };
+        let operator: &dyn Operator = if !rule.operand_unresolvable && rule.operand_has_macro {
+            let expanded = self.expand_operator_macros(&rule.operator_spec.argument);
+            dynamic_operator = compile_operator(&OperatorSpec {
+                negated: rule.operator_spec.negated,
+                name: rule.operator_spec.name,
+                argument: expanded,
+            })?;
+            dynamic_operator.as_ref()
+        } else {
+            rule.operator.as_ref()
+        };
 
         // Apply transformations and match every value
         let mut matches = Vec::new();

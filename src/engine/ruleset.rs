@@ -33,6 +33,9 @@ pub struct CompiledRule {
     /// resolve. `operator` then never matches and the argument is not
     /// expanded. Decided at load time, so evaluation only tests this flag.
     pub operand_unresolvable: bool,
+    /// Whether the operator argument holds a `%{...}` macro to expand at each
+    /// evaluation. Decided at load time, as the argument can be long.
+    pub operand_has_macro: bool,
     /// Transformation pipeline.
     pub transformations: TransformationPipeline,
     /// Actions to execute on match.
@@ -247,6 +250,7 @@ impl CompiledRuleset {
                         operator,
                         operator_negated,
                         operand_unresolvable,
+                        operand_has_macro: operator_spec.argument.contains("%{"),
                         operator_spec,
                         transformations,
                         actions: rule.actions,
@@ -297,6 +301,7 @@ impl CompiledRuleset {
                         operator,
                         operator_negated: false,
                         operand_unresolvable: false,
+                        operand_has_macro: operator_spec.argument.contains("%{"),
                         operator_spec,
                         transformations,
                         actions: sec_action.actions,

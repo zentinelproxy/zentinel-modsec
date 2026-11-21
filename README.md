@@ -13,8 +13,8 @@
 
 <p align="center">
   <a href="https://github.com/zentinelproxy/zentinel-modsec/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/zentinelproxy/zentinel-modsec/actions/workflows/ci.yml/badge.svg"></a>
-  <img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-9b4d8a?style=flat&labelColor=1f161e">
-  <img alt="Rust" src="https://img.shields.io/badge/rust-1.94.1%2B-f68d31?style=flat&labelColor=1f161e&logo=rust&logoColor=white">
+  <img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-9b4d8a?style=flat&labelColor=1f161e">
+  <img alt="Rust 1.94.1+" src="https://img.shields.io/badge/rust-1.94.1%2B-f68d31?style=flat&labelColor=1f161e&logo=rust&logoColor=white">
 </p>
 
 <p align="center">
@@ -175,10 +175,11 @@ async fn waf(
 ## What is supported
 
 **Directives:** `SecRule`, `SecAction`, `SecMarker`, `SecRuleEngine`,
-`SecDefaultAction`, `SecRuleRemoveById`, `SecRuleUpdateTargetById`,
-`SecRuleUpdateActionById`, `SecRequestBodyAccess`, `SecResponseBodyAccess`,
-`SecRequestBodyLimit`, `SecResponseBodyLimit`, `Include`. Other directives are
-logged and skipped.
+`SecDefaultAction`, `SecRuleRemoveById`, `SecRuleRemoveByTag`,
+`SecRuleRemoveByMsg`, `SecRuleUpdateTargetById`, `SecRequestBodyAccess`,
+`SecResponseBodyAccess`, `Include`. Other directives, including
+`SecRuleUpdateActionById`, `SecRequestBodyLimit` and `SecResponseBodyLimit`,
+are logged and skipped.
 
 A relative `Include` is tried as given, relative to the working directory, and
 then beside the declaring file, as in ModSecurity v3. A glob with no matches is
@@ -188,7 +189,8 @@ that includes itself, directly or through other files, is an error. If a parse
 fails, the parser retains the configuration it held before the call.
 
 **Changed after 0.6.0:** an `Include` of a literal path that does not exist is
-now a load error. It used to be skipped silently.
+now a load error. It used to be skipped silently. [`CHANGELOG.md`](CHANGELOG.md)
+lists the other changes since 0.6.0.
 
 **Operators:** `@rx`, `@pm`, `@pmf`, `@pmFromFile`, `@contains`, `@beginsWith`,
 `@endsWith`, `@streq`, `@within`, `@eq`, `@ne`, `@gt`, `@ge`, `@lt`, `@le`,
@@ -272,6 +274,9 @@ substitutes for the other.
 | `t:cmdLine` completed ([#31](https://github.com/zentinelproxy/zentinel-modsec/issues/31)) | 4,608 |
 | Later fixes, 0.5.0 (`setvar`/`t:`/`ctl:` accumulate, CRLF rule files) | 4,806 |
 | Every chain link's `setvar` runs, captures fill `TX:0`..`TX:9`, collections iterate in insertion order, 0.6.0 ([#52](https://github.com/zentinelproxy/zentinel-modsec/pull/52), [#55](https://github.com/zentinelproxy/zentinel-modsec/pull/55)) | 4,900 |
+| `t:normalizePathWin` emits forward slashes ([#70](https://github.com/zentinelproxy/zentinel-modsec/pull/70)) | 4,944 |
+| `t:urlDecodeUni` folds full-width ASCII, `t:utf8toUnicode` encodes non-ASCII ([#71](https://github.com/zentinelproxy/zentinel-modsec/pull/71), [#72](https://github.com/zentinelproxy/zentinel-modsec/pull/72)) | 4,947 |
+| `ctl:ruleRemoveByTag`, `ctl:ruleRemoveTargetByTag`, `UNIQUE_ID` ([#67](https://github.com/zentinelproxy/zentinel-modsec/pull/67)) | 4,949 |
 
 Two of those were bypasses: the `+` encoding and the missing `=` each let a
 payload reach the application while the engine inspected nothing.
@@ -311,6 +316,8 @@ Minimum Rust: 1.94.1 (`rust-version` in `Cargo.toml`).
 
 ## Related
 
+- [`docs/`](docs/): [architecture](docs/architecture.md), [CRS conformance](docs/conformance.md) (running the gate, reading a count change, bumping CRS) and [ModSecurity v3 compatibility](docs/v3-compatibility.md) (known divergences and gaps)
+- [`CHANGELOG.md`](CHANGELOG.md): changes since 0.6.0, including behavior changes
 - [ZentinelSec agent](https://registry.zentinelproxy.io/zentinelsec/): the Zentinel agent built on this engine
 - [OWASP CRS](https://coreruleset.org)
 - [libmodsecurity](https://github.com/owasp-modsecurity/ModSecurity): the reference C++ implementation

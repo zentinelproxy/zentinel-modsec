@@ -3,7 +3,7 @@
 use crate::error::Result;
 use crate::operators::{compile_operator, Operator};
 use crate::parser::{
-    Action, Directive, FlowAction, MetadataAction, OperatorName, OperatorSpec, Parser,
+    Action, DataAction, Directive, FlowAction, MetadataAction, OperatorName, OperatorSpec, Parser,
     RuleEngineMode as ParserRuleEngineMode, RuleIdSelector, Selection, UpdateTargetById,
     VariableName, VariableSpec, XmlTarget,
 };
@@ -153,7 +153,7 @@ impl CompiledRuleset {
     }
 
     /// Compile parsed directives into a ruleset.
-    pub fn compile(directives: Vec<Directive>) -> Result<Self> {
+    pub fn compile(mut directives: Vec<Directive>) -> Result<Self> {
         let mut ruleset = Self::new();
         let mut pending_chain: Option<(Phase, usize)> = None;
 
@@ -165,6 +165,10 @@ impl CompiledRuleset {
         // startup, because the alternative -- finding out from a rule that
         // never fired -- is the failure this reporting exists to prevent.
         report_unsupported_controls(&directives);
+
+        // Likewise for setvar into a collection other than TX. The setvar is
+        // taken out of the rule here, so nothing is left to check per request.
+        skip_unsupported_setvars(&mut directives);
 
         // Static removals and SecRuleUpdateTargetById are applied against the
         // whole ruleset, wherever they are declared (like ModSecurity, which
@@ -583,6 +587,45 @@ fn report_unsupported_controls(directives: &[Directive]) {
             rules_affected = count,
             reason = %reason,
             "ctl: directive is not implemented and will have no effect"
+        );
+    }
+}
+
+/// Drop every `setvar` that writes outside TX, warning once per collection.
+///
+/// libmodsecurity keeps IP, SESSION, USER, GLOBAL and RESOURCE as persistent
+/// collections; this engine has only TX. A write to another collection used to
+/// land in TX under the same member name, so `setvar:ip.score=1` overwrote
+/// `TX:score`. Rejecting it would make any ruleset that uses a persistent
+/// collection unloadable, so the setvar is removed and the rest of the rule
+/// keeps working.
+///
+/// Deduplicated by collection, like [`report_unsupported_controls`]: a ruleset
+/// that tracks state per IP does so from many rules.
+fn skip_unsupported_setvars(directives: &mut [Directive]) {
+    let mut skipped: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+
+    for directive in directives {
+        let actions = match directive {
+            Directive::SecRule(rule) => &mut rule.actions,
+            Directive::SecAction(action) => &mut action.actions,
+            _ => continue,
+        };
+        actions.retain(|action| match action {
+            Action::Data(DataAction::SetVar(spec)) if spec.collection != "tx" => {
+                *skipped.entry(spec.collection.clone()).or_default() += 1;
+                false
+            }
+            _ => true,
+        });
+    }
+
+    for (collection, count) in skipped {
+        tracing::warn!(
+            collection = %collection,
+            setvars_skipped = count,
+            "setvar writes to a collection this engine does not implement and \
+             was skipped; only TX is supported"
         );
     }
 }

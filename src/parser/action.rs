@@ -565,7 +565,7 @@ fn parse_setvar(input: &str) -> Result<SetVarSpec> {
             // Decrement
             let amount: i64 = rest.parse().unwrap_or(1);
             SetVarValue::Decrement(amount)
-        } else if let Ok(n) = val.parse::<i64>() {
+        } else if let Some(n) = val.parse::<i64>().ok().filter(|n| n.to_string() == val) {
             SetVarValue::Int(n)
         } else {
             SetVarValue::String(val.to_string())

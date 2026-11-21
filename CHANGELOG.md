@@ -39,6 +39,8 @@ pins (see [`docs/conformance.md`](docs/conformance.md)).
 
 - A rule's message, tags and other metadata are collected when it
   intervenes, not copied on every match. (#92)
+- Rule targets are resolved without copying each variable's name and
+  value; a name is rendered only for a value that matches. (#94)
 
 ## [0.7.0] - 2026-11-21
 

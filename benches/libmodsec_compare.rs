@@ -217,7 +217,13 @@ impl LibTransaction {
         let c_client = CString::new(client).unwrap();
         let c_server = CString::new(server).unwrap();
         unsafe {
-            msc_process_connection(self.tx, c_client.as_ptr(), c_port, c_server.as_ptr(), s_port);
+            msc_process_connection(
+                self.tx,
+                c_client.as_ptr(),
+                c_port,
+                c_server.as_ptr(),
+                s_port,
+            );
         }
     }
 
@@ -761,11 +767,17 @@ fn bench_full_crs_comparison(c: &mut Criterion) {
     let zentinel = zentinel_modsec::ModSecurity::from_string(&config).expect("load CRS");
     let libmsc = LibModSecurity::new();
     let librules = LibRules::new();
-    librules.add_rules(&config).expect("libmodsecurity loads CRS");
+    librules
+        .add_rules(&config)
+        .expect("libmodsecurity loads CRS");
 
     let attacks = [
         ("PATCH", "/cart", "disallowed method"),
-        ("GET", "/products?id=1%27%20UNION%20SELECT%20password%20FROM%20users--", "SQL injection"),
+        (
+            "GET",
+            "/products?id=1%27%20UNION%20SELECT%20password%20FROM%20users--",
+            "SQL injection",
+        ),
     ];
     for (method, uri, what) in attacks {
         assert!(

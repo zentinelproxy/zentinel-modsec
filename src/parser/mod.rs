@@ -406,7 +406,9 @@ impl Parser {
     /// Check whether more arguments follow on the current logical line.
     fn peek_more_arguments(&self, lexer: &mut Lexer) -> bool {
         lexer.skip_whitespace();
-        !matches!(lexer.peek(), None | Some('\n') | Some('\r') | Some('#'))
+        lexer
+            .peek()
+            .is_some_and(|c| c != '\r' && c != '#' && !lexer::is_line_terminator(c))
     }
 
     /// Parse a boolean directive (On/Off).

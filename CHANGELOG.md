@@ -11,6 +11,17 @@ pins (see [`docs/conformance.md`](docs/conformance.md)).
 
 ### Behavior changes
 
+- **Rules after a form feed, vertical tab or Unicode space are loaded.** Any
+  whitespace character other than space, tab or carriage return between
+  directives used to end the configuration silently, dropping every directive
+  after it. Those characters now separate tokens, and U+0085, U+2028 and
+  U+2029 end a line or a comment. v3 accepts none of them, so the load logs
+  one warning per distinct character with its position. Content that used to
+  be dropped is now parsed, so an error in it surfaces at load. (#79)
+- **An unquoted argument keeps a leading backslash.** `SecRule REQUEST_URI
+  \.php$` compiled `.php$` and now compiles `\.php$`; `Include
+  \\server\share\rules.conf` and `SecMarker \name` keep theirs too. A stray
+  backslash outside a word is still ignored, now with a warning. (#79)
 - **A numeric operator with a bare macro name never matches.** `@gt
   %{REMOTE_PORT}` was expanded as `tx.REMOTE_PORT` and compared against 0. v3
   reads a bare name as the variable, which the engine cannot resolve in an

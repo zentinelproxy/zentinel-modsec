@@ -1,31 +1,8 @@
+#[cfg(unix)]
+mod common;
+
 use std::fs;
-use std::io;
-use std::sync::{Arc, Mutex};
-use tracing_subscriber::fmt::MakeWriter;
 use zentinel_modsec::ModSecurity;
-
-/// Collects formatted log output so a test can assert on load-time warnings.
-#[derive(Clone, Default)]
-struct LogBuffer(Arc<Mutex<Vec<u8>>>);
-
-impl io::Write for LogBuffer {
-    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        self.0.lock().unwrap().extend_from_slice(bytes);
-        Ok(bytes.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
-impl MakeWriter<'_> for LogBuffer {
-    type Writer = Self;
-
-    fn make_writer(&self) -> Self {
-        self.clone()
-    }
-}
 
 #[test]
 fn continued_loading_after_comments_and_indented_lines() {
@@ -170,18 +147,9 @@ fn glob_match_with_an_unavailable_target_is_skipped_with_a_warning() {
     let link = dir.path().join("active.conf");
     std::os::unix::fs::symlink(dir.path().join("removed"), &link).unwrap();
 
-    let log = LogBuffer::default();
-    let subscriber = tracing_subscriber::fmt()
-        .with_writer(log.clone())
-        .with_ansi(false)
-        .finish();
-    let engine = tracing::subscriber::with_default(subscriber, || {
-        ModSecurity::from_file(root.to_str().unwrap())
-    })
-    .unwrap();
+    let (engine, log) = common::capture_log(|| ModSecurity::from_file(root.to_str().unwrap()));
 
-    assert_eq!(engine.rule_count(), 1);
-    let log = String::from_utf8(log.0.lock().unwrap().clone()).unwrap();
+    assert_eq!(engine.unwrap().rule_count(), 1);
     assert!(log.contains("WARN"), "{log}");
     assert!(log.contains(link.to_str().unwrap()), "{log}");
 }

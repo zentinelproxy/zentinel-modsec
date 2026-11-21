@@ -11,6 +11,6 @@ mod tx;
 
 pub use collection::{Collection, HashMapCollection, MutableCollection};
 pub use request::RequestData;
-pub use resolver::VariableResolver;
+pub use resolver::{ResolvedName, ResolvedValue, VariableResolver};
 pub use response::ResponseData;
 pub use tx::TxCollection;

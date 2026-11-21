@@ -41,7 +41,7 @@ a different thing: it wraps the C++ libmodsecurity.
 
 ```toml
 [dependencies]
-zentinel-modsec = "0.7"
+zentinel-modsec = "0.8"
 ```
 
 ```rust
@@ -280,31 +280,49 @@ substitutes for the other.
 | `t:urlDecodeUni` folds full-width ASCII, `t:utf8toUnicode` encodes non-ASCII ([#71](https://github.com/zentinelproxy/zentinel-modsec/pull/71), [#72](https://github.com/zentinelproxy/zentinel-modsec/pull/72)) | 4,947 |
 | `ctl:ruleRemoveByTag`, `ctl:ruleRemoveTargetByTag`, `UNIQUE_ID`, 0.7.0 ([#67](https://github.com/zentinelproxy/zentinel-modsec/pull/67)) | 4,949 |
 | `@detectSQLi` ported from libinjection rather than approximated ([#84](https://github.com/zentinelproxy/zentinel-modsec/issues/84)) | 4,952 |
-| Regex key selections compare keys case-insensitively, as in v3 ([#83](https://github.com/zentinelproxy/zentinel-modsec/pull/83)) | 4,969 |
+| Regex key selections compare keys case-insensitively, as in v3, 0.8.0 ([#83](https://github.com/zentinelproxy/zentinel-modsec/pull/83)) | 4,969 |
 
 Two of those were bypasses: the `+` encoding and the missing `=` each let a
 payload reach the application while the engine inspected nothing.
 
 ## Performance
 
-Measured with criterion in `benches/libmodsec_compare.rs`: both engines run the
-same ruleset through request phases 1 and 2, single thread, on an Apple
-M-series machine. Absolute numbers depend on hardware; the ratios are the
-point.
+Measured with criterion in `benches/libmodsec_compare.rs` on 0.8.0: both
+engines run the same rules and the same requests, single thread, on an Apple
+M4 (16 GB) with libmodsecurity 3.0.16 from Homebrew. Before anything is timed,
+each engine must block the attack inputs and pass the clean ones, so neither
+side can be measuring an empty hot path. Absolute numbers depend on hardware;
+the ratios are the point.
+
+**Full OWASP CRS 4.25.0** (698 rules; connection, headers, body and logging;
+median of three runs):
+
+| Request | zentinel-modsec | libmodsecurity 3 (C++) |
+|---|---|---|
+| `GET` with a query | 106 µs | 345 µs |
+| Form `POST` | 132 µs | 424 µs |
+| JSON `POST` | 146 µs | 446 µs |
+
+**A few rules** (request phases 1 and 2):
 
 | Benchmark | zentinel-modsec | libmodsecurity 3 (C++) |
 |---|---|---|
-| Clean request | 1.34 µs | 5.65 µs |
-| SQLi detection | 1.40 µs | 16.03 µs |
-| Body processing | 1.45 µs | 12.91 µs |
-| Rule parsing (complex) | 2.73 µs | 10.58 µs |
+| Clean request | 0.61 µs | 5.76 µs |
+| SQLi in the query | 1.98 µs | 15.21 µs |
+| SQLi in a form body | 1.93 µs | 12.31 µs |
+| Parsing one complex rule | 10.69 µs | 10.04 µs |
+
+The full CRS is the number to plan with: most of a request's time goes into
+evaluating several hundred rules, which both engines have to do, so the lead
+is about 3x rather than the 6-9x of a small ruleset. Parsing is a one-off cost
+at load and is no faster than libmodsecurity's.
 
 Reproduce with `cargo bench --features libmodsec-compare` (needs
-libmodsecurity installed); `cargo bench` alone runs the engine's own benches.
-An earlier version of this table claimed 10-30x; that benchmark never reached
-the phase-2 detection rule on either engine
-([#15](https://github.com/zentinelproxy/zentinel-modsec/issues/15)). These
-figures are the re-measurement after #15, #17 and #18.
+libmodsecurity installed; set `CRS_BENCH_DIR` to a CRS v4.25.0 checkout for
+the full-CRS group, see `benches/README.md`); `cargo bench` alone runs the
+engine's own benches. An earlier version of this table claimed 10-30x; that
+benchmark never reached the phase-2 detection rule on either engine
+([#15](https://github.com/zentinelproxy/zentinel-modsec/issues/15)).
 
 ## Development
 

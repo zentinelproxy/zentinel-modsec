@@ -206,6 +206,38 @@ fn one_unresolvable_macro_is_enough_to_leave_the_operand_uncompared() {
     assert_eq!(denied_by(rules, "/?size=5"), None);
 }
 
+/// libmodsecurity reads a bare `%{NAME}` as the variable of that name, never
+/// as `tx.NAME`. The engine cannot resolve those in an operand, so the limit
+/// would be 0 however the transaction looks.
+#[test]
+fn a_bare_macro_name_never_matches_a_numeric_operator() {
+    for operator in OPERATORS {
+        for name in ["REMOTE_PORT", "limit"] {
+            let rules = format!(
+                "SecRuleEngine On\n\
+                 SecAction \"id:9,phase:1,pass,nolog,setvar:tx.limit=1\"\n\
+                 SecRule ARGS:size \"@{operator} %{{{name}}}\" \"id:1,phase:2,deny,status:413\"\n"
+            );
+            for uri in ["/?size=-5", "/?size=0", "/?size=1", "/?size=5", "/?size="] {
+                assert_eq!(denied_by(&rules, uri), None, "{operator} {name} {uri}");
+            }
+        }
+    }
+    assert_eq!(
+        denied_by(&size_rule("!@gt %{REMOTE_PORT}"), "/?size=5").as_deref(),
+        Some("1")
+    );
+}
+
+#[test]
+fn a_bare_macro_name_still_reads_tx_outside_numeric_operators() {
+    let rules = "SecRuleEngine On\n\
+        SecAction \"id:9,phase:1,pass,nolog,setvar:tx.expected=abc\"\n\
+        SecRule ARGS:name \"@streq %{expected}\" \"id:1,phase:2,deny,status:403\"\n";
+    assert_eq!(denied_by(rules, "/?name=abc").as_deref(), Some("1"));
+    assert_eq!(denied_by(rules, "/?name=abd"), None);
+}
+
 #[test]
 fn a_resolvable_macro_without_a_value_compares_as_zero() {
     for (operator, uri) in [
@@ -246,14 +278,19 @@ SecRule ARGS:size "!@le %{env.MAX_LEN}" "id:2,phase:2,deny"
 SecRule ARGS:size "@eq %{ip.count}" "id:3,phase:2,deny"
 SecRule ARGS:size "@ge %{tx.limit}" "id:4,phase:2,deny"
 SecRule ARGS:name "@streq %{session.name}" "id:5,phase:2,deny"
+SecRule ARGS:size "@gt %{REMOTE_PORT}" "id:6,phase:2,deny"
+SecRule ARGS:name "@streq %{expected}" "id:7,phase:2,deny"
 "#,
     );
-    assert_eq!(warnings.len(), 2, "{warnings:#?}");
+    assert_eq!(warnings.len(), 3, "{warnings:#?}");
+    assert!(warnings[0].contains("%{REMOTE_PORT}"), "{warnings:#?}");
+    assert!(warnings[0].contains("rules_affected=1"), "{warnings:#?}");
+    let warnings = &warnings[1..];
     assert!(warnings[0].contains("%{env.MAX_LEN}"), "{warnings:#?}");
     assert!(warnings[0].contains("rules_affected=2"), "{warnings:#?}");
     assert!(warnings[1].contains("%{ip.count}"), "{warnings:#?}");
     assert!(warnings[1].contains("rules_affected=1"), "{warnings:#?}");
-    for warning in &warnings {
+    for warning in warnings {
         assert!(warning.contains("will never match"), "{warning}");
     }
 }
